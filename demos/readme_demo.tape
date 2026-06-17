@@ -32,6 +32,10 @@ Type "ll"
 Sleep 500ms
 Type "<<<<<<"
 Sleep 500ms
+Type "n"
+Sleep 1s 
+Type "n"
+Sleep 500ms
 Type "hh"
 Sleep 500ms
 Type "A"
