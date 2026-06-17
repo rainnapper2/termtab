@@ -324,27 +324,44 @@ impl Editor {
             
             let mut replacement = Vec::new();
             
-            // 1. Left part padded
-            replacement.extend(self.document.columns[m_start..col].to_vec());
-            replacement.extend(vec![TabColumn::new(); m_len - k]);
-            replacement.push(TabColumn::barline(num_strings));
-            
-            // 2. Clipboard padded to measures
-            let mut i = 0;
-            while i < clip.len() {
-                let chunk = &clip[i.. (i + m_len).min(clip.len())];
-                replacement.extend(chunk.to_vec());
-                if chunk.len() < m_len {
-                    let pad_len = m_len - chunk.len();
-                    replacement.extend(vec![TabColumn::new(); pad_len]);
+            if k == 0 {
+                // Paste at start of measure: insert clip before the measure
+                let mut i = 0;
+                while i < clip.len() {
+                    let chunk = &clip[i.. (i + m_len).min(clip.len())];
+                    replacement.extend(chunk.to_vec());
+                    if chunk.len() < m_len {
+                        let pad_len = m_len - chunk.len();
+                        replacement.extend(vec![TabColumn::new(); pad_len]);
+                    }
+                    replacement.push(TabColumn::barline(num_strings));
+                    i += m_len;
                 }
+                replacement.extend(self.document.columns[m_start..=m_end].to_vec());
+            } else {
+                // Paste inside measure (k > 0)
+                // 1. Left part padded
+                replacement.extend(self.document.columns[m_start..col].to_vec());
+                replacement.extend(vec![TabColumn::new(); m_len - k]);
                 replacement.push(TabColumn::barline(num_strings));
-                i += m_len;
+                
+                // 2. Clipboard padded to measures
+                let mut i = 0;
+                while i < clip.len() {
+                    let chunk = &clip[i.. (i + m_len).min(clip.len())];
+                    replacement.extend(chunk.to_vec());
+                    if chunk.len() < m_len {
+                        let pad_len = m_len - chunk.len();
+                        replacement.extend(vec![TabColumn::new(); pad_len]);
+                    }
+                    replacement.push(TabColumn::barline(num_strings));
+                    i += m_len;
+                }
+                
+                // 3. Right part padded
+                replacement.extend(vec![TabColumn::new(); k]);
+                replacement.extend(self.document.columns[col..=m_end].to_vec());
             }
-            
-            // 3. Right part padded
-            replacement.extend(vec![TabColumn::new(); k]);
-            replacement.extend(self.document.columns[col..=m_end].to_vec());
             
             self.document.columns.splice(m_start..=m_end, replacement);
         }
@@ -452,5 +469,30 @@ mod tests {
         assert_eq!(ed.document.columns[47].get_char(0), '|');
         
         assert_eq!(ed.document.columns.len(), 97);
+    }
+
+    #[test]
+    fn test_editor_paste_at_measure_start() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
+        ed.replace_chars(&['9', '9', '9']);
+        
+        ed.copy_columns(0, 2);
+        
+        ed.cursor.col = 16; // Start of M2
+        ed.paste_columns();
+        
+        // New M2 (pasted): clip (3 cols) + 12 blanks + barline (16 cols total)
+        assert_eq!(ed.document.columns[16].get_char(0), '9');
+        assert_eq!(ed.document.columns[17].get_char(0), '9');
+        assert_eq!(ed.document.columns[18].get_char(0), '9');
+        assert_eq!(ed.document.columns[31].get_char(0), '|');
+        
+        // New M3 (original M2): starts at 32. All dashes.
+        assert_eq!(ed.document.columns[32].get_char(0), '-');
+        assert_eq!(ed.document.columns[47].get_char(0), '|');
+        
+        assert_eq!(ed.document.columns.len(), 81);
     }
 }
