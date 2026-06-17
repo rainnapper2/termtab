@@ -132,6 +132,34 @@ impl Editor {
         self.cursor.col = self.document.columns.len().saturating_sub(1);
     }
 
+    pub fn jump_next_row(&mut self, wrap_width: usize) {
+        let chunks = self.document.calculate_chunks(wrap_width);
+        for (i, chunk) in chunks.iter().enumerate() {
+            if chunk.contains(&self.cursor.col) {
+                if i + 1 < chunks.len() {
+                    let offset = self.cursor.col - chunk.start;
+                    let next_chunk = &chunks[i + 1];
+                    self.cursor.col = (next_chunk.start + offset).min(next_chunk.end.saturating_sub(1));
+                }
+                break;
+            }
+        }
+    }
+
+    pub fn jump_prev_row(&mut self, wrap_width: usize) {
+        let chunks = self.document.calculate_chunks(wrap_width);
+        for (i, chunk) in chunks.iter().enumerate() {
+            if chunk.contains(&self.cursor.col) {
+                if i > 0 {
+                    let offset = self.cursor.col - chunk.start;
+                    let prev_chunk = &chunks[i - 1];
+                    self.cursor.col = (prev_chunk.start + offset).min(prev_chunk.end.saturating_sub(1));
+                }
+                break;
+            }
+        }
+    }
+
     pub fn insert_column(&mut self) {
         self.save_state();
         self.document.columns.insert(self.cursor.col, TabColumn::new());

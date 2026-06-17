@@ -21,9 +21,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     
     let mut scroll_y = 0;
     if let Some((_, cy)) = cursor_pos {
+        let row_center_y = cy.saturating_sub(app.editor.cursor.string) + 3;
         let visible_height = chunks[0].height.saturating_sub(2);
-        if cy as u16 > visible_height / 2 {
-            scroll_y = (cy as u16) - (visible_height / 2);
+        if row_center_y as u16 > visible_height / 2 {
+            scroll_y = (row_center_y as u16) - (visible_height / 2);
         }
     }
 
@@ -137,7 +138,6 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
     let mut lines = Vec::new();
     let wrap_width = if max_width > 4 { max_width - 4 } else { 80 }; // Keep margin for borders
     
-    let mut current_col = 0;
     let mut cursor_visual_pos = None;
 
     // Pre-calculate active key for every column so multiple key changes work properly
@@ -152,21 +152,11 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
         column_keys.push(current_key.clone());
     }
 
-    while current_col < app.editor.document.columns.len() {
-        let mut chunk_len = 0;
-        while chunk_len < wrap_width && current_col + chunk_len < app.editor.document.columns.len() {
-            chunk_len += 1;
-            if chunk_len >= 2 {
-                let curr_idx = current_col + chunk_len - 1;
-                let prev_idx = curr_idx - 1;
-                if app.editor.document.columns[prev_idx].is_barline() && app.editor.document.columns[curr_idx].is_barline() {
-                    break;
-                }
-            }
-        }
-        
-        let end_col = current_col + chunk_len;
-        let chunk = &app.editor.document.columns[current_col..end_col];
+    let chunks = app.editor.document.calculate_chunks(wrap_width);
+
+    for chunk_range in chunks {
+        let current_col = chunk_range.start;
+        let chunk = &app.editor.document.columns[chunk_range];
 
         // Column Header
         let col_header = format!("  [Col: {}]", current_col);
@@ -300,7 +290,6 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
         // Add a blank line between blocks
         lines.push(Line::from(""));
         
-        current_col = end_col;
     }
 
     (Text::from(lines), cursor_visual_pos)

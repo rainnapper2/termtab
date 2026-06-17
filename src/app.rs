@@ -105,7 +105,7 @@ impl App {
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 self.count_buffer.push(c);
             }
-            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Char('e') | KeyCode::Char('b') => {
+            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Char('e') | KeyCode::Char('b') | KeyCode::Char('[') | KeyCode::Char(']') => {
                 let count = if self.count_buffer.is_empty() {
                     1
                 } else {
@@ -121,6 +121,16 @@ impl App {
                     KeyCode::Char('w') => { for _ in 0..count { self.editor.jump_next_measure(); } }
                     KeyCode::Char('b') => { for _ in 0..count { self.editor.jump_prev_measure(); } }
                     KeyCode::Char('e') => { for _ in 0..count { self.editor.jump_end_measure(); } }
+                    KeyCode::Char(']') => {
+                        let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let wrap_width = if width > 4 { (width - 4) as usize } else { 80 };
+                        for _ in 0..count { self.editor.jump_next_row(wrap_width); }
+                    }
+                    KeyCode::Char('[') => {
+                        let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let wrap_width = if width > 4 { (width - 4) as usize } else { 80 };
+                        for _ in 0..count { self.editor.jump_prev_row(wrap_width); }
+                    }
                     _ => {}
                 }
             }

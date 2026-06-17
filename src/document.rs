@@ -59,6 +59,29 @@ impl TabDocument {
             clipboard: Vec::new(),
         }
     }
+
+    pub fn calculate_chunks(&self, wrap_width: usize) -> Vec<std::ops::Range<usize>> {
+        let mut chunks = Vec::new();
+        let mut current_col = 0;
+        
+        while current_col < self.columns.len() {
+            let mut chunk_len = 0;
+            while chunk_len < wrap_width && current_col + chunk_len < self.columns.len() {
+                chunk_len += 1;
+                if chunk_len >= 2 {
+                    let curr_idx = current_col + chunk_len - 1;
+                    let prev_idx = curr_idx - 1;
+                    if self.columns[prev_idx].is_barline() && self.columns[curr_idx].is_barline() {
+                        break;
+                    }
+                }
+            }
+            let end_col = current_col + chunk_len;
+            chunks.push(current_col..end_col);
+            current_col += chunk_len;
+        }
+        chunks
+    }
 }
 
 impl Default for TabDocument {
