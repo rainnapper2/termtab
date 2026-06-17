@@ -198,9 +198,28 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
             }
         };
 
+        let get_visual_offset = |col_idx_in_chunk: usize| -> usize {
+            let mut offset = 2; // "e|"
+            for j in 0..col_idx_in_chunk {
+                offset += 1;
+                let g_col = current_col + j;
+                let (_, box_end) = app.editor.document.box_range(g_col);
+                if !app.editor.document.columns[g_col].is_barline(app.editor.document.tuning.len())
+                    && g_col + 1 == box_end 
+                    && j + 1 < chunk.len() 
+                {
+                    let next_g_col = g_col + 1;
+                    if !app.editor.document.columns[next_g_col].is_barline(app.editor.document.tuning.len()) {
+                        offset += 1;
+                    }
+                }
+            }
+            offset
+        };
+
         for (i, col) in chunk.iter().enumerate() {
             let global_col = current_col + i;
-            let offset_i = i + 2; // Offset by 2 to align past the "e|" tuning prefix
+            let offset_i = get_visual_offset(i);
 
             if app.editor.document.is_measure_start(global_col) {
                 let text = format!("[{}]", app.editor.document.measure_number_at_col(global_col));
