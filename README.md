@@ -1,5 +1,7 @@
 # TermTab
 
+![TermTab Demo](demos/readme_demo.gif)
+
 TermTab is a Vim-style terminal user interface for creating and editing guitar tabs. It treats musical tablature as a continuous stream of structural columns rather than a raw 2D text grid, allowing for precise editing, dynamic word-wrapping, and annotation tracking.
 
 ## Quick Start
