@@ -283,8 +283,13 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
-                // Pressing enter sends to the next box (column in user view)
                 self.editor.move_cursor(1, 0);
+                let tuning_len = self.editor.document.tuning.len();
+                while self.editor.cursor.col < self.editor.document.columns.len() 
+                    && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
+                {
+                    self.editor.move_cursor(1, 0);
+                }
             }
             KeyCode::Backspace => {
                 let tuning_len = self.editor.document.tuning.len();
