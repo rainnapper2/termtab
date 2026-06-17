@@ -291,79 +291,72 @@ impl Editor {
         self.save_state();
         let clip = self.document.clipboard.clone();
         let num_strings = self.document.tuning.len();
-        
         let col = self.cursor.col;
         
-        if self.document.columns[col].is_barline(num_strings) {
-            let m_len = 15;
-            let mut new_cols = Vec::new();
-            let mut i = 0;
-            while i < clip.len() {
-                let chunk = &clip[i.. (i + m_len).min(clip.len())];
-                new_cols.extend(chunk.to_vec());
-                if chunk.len() < m_len {
-                    let pad_len = m_len - chunk.len();
-                    new_cols.extend(vec![TabColumn::new(); pad_len]);
-                }
-                new_cols.push(TabColumn::barline(num_strings));
-                i += m_len;
-            }
-            
-            let tail = self.document.columns.split_off(col);
-            self.document.columns.extend(new_cols);
-            self.document.columns.extend(tail);
-        } else {
-            let m_start = self.document.measure_start_col(col);
-            let mut m_end = col;
+        // 1. Insert clip at col
+        let tail = self.document.columns.split_off(col);
+        self.document.columns.extend(clip);
+        self.document.columns.extend(tail);
+        
+        // 2. Ripple overflow
+        let m_len = 15;
+        let mut current_col = col;
+        
+        loop {
+            let m_start = self.document.measure_start_col(current_col);
+            let mut m_end = m_start;
             while m_end < self.document.columns.len() && !self.document.columns[m_end].is_barline(num_strings) {
                 m_end += 1;
             }
-            let m_len = 15;
             
-            let k = col - m_start;
-            
-            let mut replacement = Vec::new();
-            
-            if k == 0 {
-                // Paste at start of measure: insert clip before the measure
-                let mut i = 0;
-                while i < clip.len() {
-                    let chunk = &clip[i.. (i + m_len).min(clip.len())];
-                    replacement.extend(chunk.to_vec());
-                    if chunk.len() < m_len {
-                        let pad_len = m_len - chunk.len();
-                        replacement.extend(vec![TabColumn::new(); pad_len]);
-                    }
-                    replacement.push(TabColumn::barline(num_strings));
-                    i += m_len;
+            if m_end == self.document.columns.len() {
+                let current_len = self.document.columns.len() - m_start;
+                if current_len > m_len {
+                    let split_pt = m_start + m_len;
+                    let overflow = self.document.columns.split_off(split_pt);
+                    self.document.columns.push(TabColumn::barline(num_strings));
+                    self.document.columns.extend(overflow);
+                    current_col = split_pt + 1;
+                    continue;
+                } else {
+                    let pad_len = m_len - current_len;
+                    self.document.columns.extend(vec![TabColumn::new(); pad_len]);
+                    self.document.columns.push(TabColumn::barline(num_strings));
+                    self.document.columns.push(TabColumn::barline(num_strings));
+                    break;
                 }
-                replacement.extend(self.document.columns[m_start..=m_end].to_vec());
-            } else {
-                // Paste inside measure (k > 0)
-                // 1. Left part padded
-                replacement.extend(self.document.columns[m_start..col].to_vec());
-                replacement.extend(vec![TabColumn::new(); m_len - k]);
-                replacement.push(TabColumn::barline(num_strings));
-                
-                // 2. Clipboard padded to measures
-                let mut i = 0;
-                while i < clip.len() {
-                    let chunk = &clip[i.. (i + m_len).min(clip.len())];
-                    replacement.extend(chunk.to_vec());
-                    if chunk.len() < m_len {
-                        let pad_len = m_len - chunk.len();
-                        replacement.extend(vec![TabColumn::new(); pad_len]);
-                    }
-                    replacement.push(TabColumn::barline(num_strings));
-                    i += m_len;
-                }
-                
-                // 3. Right part padded
-                replacement.extend(vec![TabColumn::new(); k]);
-                replacement.extend(self.document.columns[col..=m_end].to_vec());
             }
             
-            self.document.columns.splice(m_start..=m_end, replacement);
+            let current_measure_len = m_end - m_start;
+            if current_measure_len > m_len {
+                let split_pt = m_start + m_len;
+                let overflow_range = split_pt .. m_end;
+                let overflow_cols: Vec<TabColumn> = self.document.columns[overflow_range.clone()].to_vec();
+                
+                self.document.columns.drain(overflow_range);
+                
+                let mut insert_pos = split_pt + 1;
+                let mut barline_count = 1;
+                while insert_pos < self.document.columns.len() && self.document.columns[insert_pos].is_barline(num_strings) {
+                    insert_pos += 1;
+                    barline_count += 1;
+                }
+                
+                if barline_count > 1 {
+                    // Convert double/multiple barlines to single when pushing content past them
+                    let num_to_remove = barline_count - 1;
+                    self.document.columns.drain(split_pt + 1 .. split_pt + 1 + num_to_remove);
+                    insert_pos -= num_to_remove;
+                }
+                
+                let tail = self.document.columns.split_off(insert_pos);
+                self.document.columns.extend(overflow_cols);
+                self.document.columns.extend(tail);
+                
+                current_col = insert_pos;
+            } else {
+                break;
+            }
         }
     }
 }
@@ -452,23 +445,21 @@ mod tests {
         ed.cursor.col = 6;
         ed.paste_columns();
         
-        // M1 (part 1): cols 0..5 (6 cols) + 9 blanks + barline (16 cols total)
+        // M1: cols 0..5 (original) + clip (3) + cols 6..11 (original) = 15 cols
         assert_eq!(ed.document.columns[0].get_char(0), '9');
         assert_eq!(ed.document.columns[1].get_char(0), '9');
         assert_eq!(ed.document.columns[2].get_char(0), '9');
+        assert_eq!(ed.document.columns[3].get_char(0), '-');
+        assert_eq!(ed.document.columns[6].get_char(0), '9');
+        assert_eq!(ed.document.columns[7].get_char(0), '9');
+        assert_eq!(ed.document.columns[8].get_char(0), '9');
         assert_eq!(ed.document.columns[15].get_char(0), '|');
         
-        // M2 (pasted): clip (3 cols) + 12 blanks + barline (16 cols total)
-        assert_eq!(ed.document.columns[16].get_char(0), '9');
-        assert_eq!(ed.document.columns[17].get_char(0), '9');
-        assert_eq!(ed.document.columns[18].get_char(0), '9');
+        // M2: cols 12..14 (original M1 overflow, 3 cols) + 12 cols of original M2 = 15 cols
+        assert_eq!(ed.document.columns[16].get_char(0), '-');
         assert_eq!(ed.document.columns[31].get_char(0), '|');
         
-        // M3 (part 2): 6 blanks + cols 6..14 (9 cols) + barline (16 cols total)
-        assert_eq!(ed.document.columns[32].get_char(0), '-');
-        assert_eq!(ed.document.columns[47].get_char(0), '|');
-        
-        assert_eq!(ed.document.columns.len(), 97);
+        assert_eq!(ed.document.columns.len(), 81);
     }
 
     #[test]
@@ -483,13 +474,13 @@ mod tests {
         ed.cursor.col = 16; // Start of M2
         ed.paste_columns();
         
-        // New M2 (pasted): clip (3 cols) + 12 blanks + barline (16 cols total)
+        // M2: clip (3) + 12 empty of M2 = 15 cols
         assert_eq!(ed.document.columns[16].get_char(0), '9');
         assert_eq!(ed.document.columns[17].get_char(0), '9');
         assert_eq!(ed.document.columns[18].get_char(0), '9');
         assert_eq!(ed.document.columns[31].get_char(0), '|');
         
-        // New M3 (original M2): starts at 32. All dashes.
+        // M3: 3 empty (overflow M2) + 12 empty M3 = 15 cols
         assert_eq!(ed.document.columns[32].get_char(0), '-');
         assert_eq!(ed.document.columns[47].get_char(0), '|');
         
