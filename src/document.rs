@@ -83,13 +83,25 @@ impl TabDocument {
         chunks
     }
 
+    pub fn measure_number_at_col(&self, col_idx: usize) -> usize {
+        let mut measure = 1;
+        for i in 0..col_idx {
+            if self.columns[i].is_barline() {
+                if i == 0 || !self.columns[i - 1].is_barline() {
+                    measure += 1;
+                }
+            }
+        }
+        measure
+    }
+
     pub fn dump_to_string(&self, wrap_width: usize) -> String {
         let mut out = String::new();
         let chunks = self.calculate_chunks(wrap_width);
 
         for chunk_range in chunks {
             let chunk = &self.columns[chunk_range.clone()];
-            out.push_str(&format!("  [Col: {}]\n", chunk_range.start));
+            out.push_str(&format!("  [Measure: {}]\n", self.measure_number_at_col(chunk_range.start)));
 
             let mut annotation_lines: Vec<Vec<char>> = Vec::new();
             for (i, col) in chunk.iter().enumerate() {
