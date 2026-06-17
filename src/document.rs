@@ -132,7 +132,23 @@ impl TabDocument {
         
         while current_col < self.columns.len() {
             let mut chunk_len = 0;
-            while chunk_len < wrap_width && current_col + chunk_len < self.columns.len() {
+            let mut visual_width = 0;
+            while visual_width < wrap_width && current_col + chunk_len < self.columns.len() {
+                let col_idx = current_col + chunk_len;
+                visual_width += 1; // 1 for the column itself
+                
+                // Add separator if applicable
+                let (_, box_end) = self.box_range(col_idx);
+                if !self.columns[col_idx].is_barline(self.tuning.len())
+                    && col_idx + 1 == box_end 
+                    && col_idx + 1 < self.columns.len() 
+                {
+                    let next_col = col_idx + 1;
+                    if !self.columns[next_col].is_barline(self.tuning.len()) {
+                        visual_width += 1; // +1 for separator '-'
+                    }
+                }
+                
                 chunk_len += 1;
                 if chunk_len >= 2 {
                     let curr_idx = current_col + chunk_len - 1;
@@ -166,6 +182,38 @@ impl TabDocument {
             return true;
         }
         self.columns[col_idx - 1].is_barline(self.tuning.len()) && !self.columns[col_idx].is_barline(self.tuning.len())
+    }
+
+    pub fn measure_start_col(&self, col: usize) -> usize {
+        let mut start = col;
+        let num_strings = self.tuning.len();
+        while start > 0 && !self.columns[start - 1].is_barline(num_strings) {
+            start -= 1;
+        }
+        start
+    }
+
+    pub fn box_range(&self, col: usize) -> (usize, usize) {
+        let num_strings = self.tuning.len();
+        if col >= self.columns.len() {
+            return (col, col);
+        }
+        if self.columns[col].is_barline(num_strings) {
+            return (col, col + 1);
+        }
+        let m_start = self.measure_start_col(col);
+        let offset = col - m_start;
+        let box_idx = offset / 3;
+        let box_start = m_start + box_idx * 3;
+        
+        let mut box_end = box_start + 3;
+        for i in box_start..box_end {
+            if i < self.columns.len() && self.columns[i].is_barline(num_strings) {
+                box_end = i;
+                break;
+            }
+        }
+        (box_start, box_end.min(self.columns.len()))
     }
 
     pub fn dump_to_string(&self, wrap_width: usize) -> String {
@@ -202,9 +250,25 @@ impl TabDocument {
                 }
             };
 
+            let get_visual_offset = |col_idx_in_chunk: usize| -> usize {
+                let mut offset = 2; // "e|"
+                for j in 0..col_idx_in_chunk {
+                    offset += 1;
+                    let g_col = chunk_range.start + j;
+                    let (_, box_end) = self.box_range(g_col);
+                    if g_col + 1 == box_end && j + 1 < chunk.len() {
+                        let next_g_col = g_col + 1;
+                        if !self.columns[next_g_col].is_barline(self.tuning.len()) {
+                            offset += 1;
+                        }
+                    }
+                }
+                offset
+            };
+
             for (i, col) in chunk.iter().enumerate() {
                 let global_col = chunk_range.start + i;
-                let offset_i = i + 2;
+                let offset_i = get_visual_offset(i);
 
                 if self.is_measure_start(global_col) {
                     let text = format!("[{}]", self.measure_number_at_col(global_col));
@@ -231,8 +295,20 @@ impl TabDocument {
             for string_idx in 0..self.tuning.len() {
                 let tuning_char = self.tuning[string_idx];
                 out.push_str(&format!("{}|", tuning_char));
-                for col in chunk {
+                for (i, col) in chunk.iter().enumerate() {
                     out.push(col.get_char(string_idx));
+                    
+                    let global_col = chunk_range.start + i;
+                    let (_, box_end) = self.box_range(global_col);
+                    if !self.columns[global_col].is_barline(self.tuning.len())
+                        && global_col + 1 == box_end 
+                        && i + 1 < chunk.len() 
+                    {
+                        let next_global_col = global_col + 1;
+                        if !self.columns[next_global_col].is_barline(self.tuning.len()) {
+                            out.push('-'); // separator
+                        }
+                    }
                 }
                 out.push('\n');
             }
@@ -257,5 +333,45 @@ pub struct Cursor {
 impl Cursor {
     pub fn new() -> Self {
         Self { col: 0, string: 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_box_range() {
+        let doc = TabDocument::default();
+        assert_eq!(doc.box_range(0), (0, 3));
+        assert_eq!(doc.box_range(1), (0, 3));
+        assert_eq!(doc.box_range(2), (0, 3));
+        assert_eq!(doc.box_range(3), (3, 6));
+        assert_eq!(doc.box_range(12), (12, 15));
+        assert_eq!(doc.box_range(14), (12, 15));
+        assert_eq!(doc.box_range(15), (15, 16));
+        assert_eq!(doc.box_range(16), (16, 19));
+        assert_eq!(doc.box_range(30), (28, 31));
+        assert_eq!(doc.box_range(31), (31, 32));
+    }
+
+    #[test]
+    fn test_measure_start_col() {
+        let doc = TabDocument::default();
+        assert_eq!(doc.measure_start_col(0), 0);
+        assert_eq!(doc.measure_start_col(5), 0);
+        assert_eq!(doc.measure_start_col(14), 0);
+        assert_eq!(doc.measure_start_col(15), 0);
+        assert_eq!(doc.measure_start_col(16), 16);
+        assert_eq!(doc.measure_start_col(20), 16);
+        assert_eq!(doc.measure_start_col(31), 16);
+    }
+
+    #[test]
+    fn test_dump_to_string() {
+        let doc = TabDocument::default();
+        let dump = doc.dump_to_string(100);
+        assert!(dump.contains("e|-------------------|-------------------|-------------------|-------------------||"));
+        assert!(dump.contains("B|-------------------|-------------------|-------------------|-------------------||"));
     }
 }

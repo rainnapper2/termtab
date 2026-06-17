@@ -43,13 +43,65 @@ impl Editor {
         }
     }
 
+    fn next_box_col(&self, col: usize, direction: isize) -> usize {
+        let num_strings = self.document.tuning.len();
+        if direction > 0 {
+            if col >= self.document.columns.len() {
+                return col + 3;
+            }
+            if self.document.columns[col].is_barline(num_strings) {
+                col + 1
+            } else {
+                let (_, box_end) = self.document.box_range(col);
+                box_end
+            }
+        } else {
+            if col == 0 { return 0; }
+            if col >= self.document.columns.len() {
+                return self.document.columns.len().saturating_sub(1);
+            }
+            if self.document.columns[col].is_barline(num_strings) {
+                let prev_col = col - 1;
+                if self.document.columns[prev_col].is_barline(num_strings) {
+                    prev_col
+                } else {
+                    let (box_start, _) = self.document.box_range(prev_col);
+                    box_start
+                }
+            } else {
+                let (box_start, _) = self.document.box_range(col);
+                if box_start == self.document.measure_start_col(col) {
+                    if box_start > 0 {
+                        box_start - 1
+                    } else {
+                        0
+                    }
+                } else {
+                    box_start.saturating_sub(3)
+                }
+            }
+        }
+    }
+
     pub fn move_cursor(&mut self, dx: isize, dy: isize) {
-        let new_col = (self.cursor.col as isize + dx).max(0) as usize;
         let new_string = (self.cursor.string as isize + dy).clamp(0, self.document.tuning.len().saturating_sub(1) as isize) as usize;
         
+        let mut new_col = self.cursor.col;
+        if dx != 0 {
+            let direction = dx.signum();
+            let steps = dx.abs();
+            for _ in 0..steps {
+                new_col = self.next_box_col(new_col, direction);
+            }
+        }
+
         // Ensure the document expands if we move past the end
         while new_col >= self.document.columns.len() {
-            self.document.columns.push(TabColumn::new());
+            let num_strings = self.document.tuning.len();
+            for _ in 0..15 {
+                self.document.columns.push(TabColumn::new());
+            }
+            self.document.columns.push(TabColumn::barline(num_strings));
         }
 
         self.cursor.col = new_col;
@@ -67,11 +119,15 @@ impl Editor {
     }
 
     pub fn jump_next_measure(&mut self) {
+        let num_strings = self.document.tuning.len();
         for i in (self.cursor.col + 1)..self.document.columns.len() {
-            if self.document.columns[i].is_barline(self.document.tuning.len()) {
+            if self.document.columns[i].is_barline(num_strings) {
                 self.cursor.col = i + 1;
                 if self.cursor.col >= self.document.columns.len() {
-                    self.document.columns.push(TabColumn::new());
+                    for _ in 0..15 {
+                        self.document.columns.push(TabColumn::new());
+                    }
+                    self.document.columns.push(TabColumn::barline(num_strings));
                 }
                 return;
             }
@@ -144,21 +200,37 @@ impl Editor {
         }
     }
 
-    pub fn insert_column(&mut self) {
+    pub fn insert_box(&mut self) {
         self.save_state();
-        self.document.columns.insert(self.cursor.col, TabColumn::new());
+        let (box_start, _) = self.document.box_range(self.cursor.col);
+        for _ in 0..3 {
+            self.document.columns.insert(box_start, TabColumn::new());
+        }
+        self.cursor.col = box_start;
     }
 
-    pub fn delete_column(&mut self) {
+    pub fn delete_box(&mut self) {
         if self.document.columns.is_empty() { return; }
         self.save_state();
-        self.document.columns.remove(self.cursor.col);
+        let (box_start, box_end) = self.document.box_range(self.cursor.col);
+        
+        let num_strings = self.document.tuning.len();
+        if self.document.columns[self.cursor.col].is_barline(num_strings) {
+            self.document.columns.remove(self.cursor.col);
+        } else {
+            self.document.columns.drain(box_start..box_end);
+        }
+
         // Ensure there's always at least one column
         if self.document.columns.is_empty() {
             self.document.columns.push(TabColumn::new());
         }
         if self.cursor.col >= self.document.columns.len() {
             self.cursor.col = self.document.columns.len() - 1;
+        }
+        if !self.document.columns[self.cursor.col].is_barline(num_strings) {
+            let (new_box_start, _) = self.document.box_range(self.cursor.col);
+            self.cursor.col = new_box_start;
         }
     }
 
@@ -231,18 +303,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_editor_insert_delete_column() {
+    fn test_editor_insert_delete_box() {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         assert_eq!(ed.document.columns.len(), 65); // 4 measures * 15 cols + 5 barlines = 65
-        ed.insert_column();
-        assert_eq!(ed.document.columns.len(), 66);
+        ed.insert_box();
+        assert_eq!(ed.document.columns.len(), 68);
         ed.undo();
         assert_eq!(ed.document.columns.len(), 65);
         ed.redo();
-        assert_eq!(ed.document.columns.len(), 66);
+        assert_eq!(ed.document.columns.len(), 68);
 
-        ed.delete_column();
+        ed.delete_box();
         assert_eq!(ed.document.columns.len(), 65);
+    }
+
+    #[test]
+    fn test_editor_box_navigation() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        
+        // Move right: should go to col 3 (start of Box 1)
+        ed.move_cursor(1, 0);
+        assert_eq!(ed.cursor.col, 3);
+        
+        // Move right again: should go to col 6 (start of Box 2)
+        ed.move_cursor(1, 0);
+        assert_eq!(ed.cursor.col, 6);
+        
+        // Move left: should go to col 3
+        ed.move_cursor(-1, 0);
+        assert_eq!(ed.cursor.col, 3);
+
+        // Move to end of measure 1 (col 12 is Box 4 start)
+        ed.cursor.col = 12;
+        // Move right: should go to col 15 (barline)
+        ed.move_cursor(1, 0);
+        assert_eq!(ed.cursor.col, 15);
+        
+        // Move right again: should go to col 16 (start of Measure 2 Box 0)
+        ed.move_cursor(1, 0);
+        assert_eq!(ed.cursor.col, 16);
+
+        // Move left from 16: should go to 15 (barline)
+        ed.move_cursor(-1, 0);
+        assert_eq!(ed.cursor.col, 15);
+
+        // Move left from 15: should go to 12 (start of Box 4 in Measure 1)
+        ed.move_cursor(-1, 0);
+        assert_eq!(ed.cursor.col, 12);
     }
 
     #[test]
@@ -265,15 +373,17 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
-        ed.replace_chars(&['9']);
+        ed.replace_chars(&['9', '9', '9']);
         
-        ed.copy_columns(0, 0);
-        assert_eq!(ed.document.clipboard.len(), 1);
+        ed.copy_columns(0, 2);
+        assert_eq!(ed.document.clipboard.len(), 3);
         assert_eq!(ed.document.clipboard[0].get_char(0), '9');
 
-        ed.cursor.col = 5;
+        ed.cursor.col = 6;
         ed.paste_columns();
-        assert_eq!(ed.document.columns[5].get_char(0), '9');
-        assert_eq!(ed.document.columns.len(), 66);
+        assert_eq!(ed.document.columns[6].get_char(0), '9');
+        assert_eq!(ed.document.columns[7].get_char(0), '9');
+        assert_eq!(ed.document.columns[8].get_char(0), '9');
+        assert_eq!(ed.document.columns.len(), 68);
     }
 }

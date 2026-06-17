@@ -232,28 +232,51 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
             let tuning_char = app.editor.document.tuning[string_idx];
             string_chars.push(Span::styled(format!("{}|", tuning_char), Style::default().fg(Color::DarkGray)));
 
+            let mut visual_col_offset = 2; // Start after "e|"
+            let active_box_range = app.editor.document.box_range(app.editor.cursor.col);
+            let is_active_string = app.editor.cursor.string == string_idx;
+            
             let mut i = 0;
             while i < chunk.len() {
                 let global_col = current_col + i;
-                let c = chunk[i].get_char(string_idx);
                 
                 let mut is_selected = false;
+                let mut visual_range = None;
                 if let Mode::Visual { start_col } = app.mode {
-                    let min_c = start_col.min(app.editor.cursor.col);
-                    let max_c = start_col.max(app.editor.cursor.col);
-                    if global_col >= min_c && global_col <= max_c {
+                    let (s, e) = app.get_visual_range(start_col);
+                    visual_range = Some((s, e));
+                    if global_col >= s && global_col <= e {
                         is_selected = true;
+                    }
+                }
+
+                let is_in_active_box = is_active_string && 
+                    !app.editor.document.columns[global_col].is_barline(app.editor.document.tuning.len()) &&
+                    global_col >= active_box_range.0 && global_col < active_box_range.1;
+
+                let mut c = chunk[i].get_char(string_idx);
+                let mut is_preview = false;
+                
+                if let Mode::Replace { buffer } = &app.mode {
+                    if is_in_active_box {
+                        let buf_idx = global_col - active_box_range.0;
+                        if buf_idx < buffer.len() {
+                            c = buffer.chars().nth(buf_idx).unwrap();
+                            if c == ' ' { c = '-'; }
+                            is_preview = true;
+                        }
                     }
                 }
 
                 let style = if is_selected {
                     Style::default().bg(Color::White).fg(Color::Black)
+                } else if is_in_active_box && !matches!(app.mode, Mode::Visual {..}) {
+                    Style::default().bg(Color::Rgb(50, 50, 100)).fg(Color::White)
                 } else {
                     Style::default()
                 };
 
-                if app.note_mode && c.is_ascii_digit() {
-                    // Try to parse fret
+                if app.note_mode && c.is_ascii_digit() && !is_preview {
                     let mut fret_str = c.to_string();
                     let mut consumed_next = false;
                     if i + 1 < chunk.len() && chunk[i+1].get_char(string_idx).is_ascii_digit() {
@@ -266,34 +289,65 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                         let note_chars: Vec<char> = note.chars().collect();
                         
                         string_chars.push(Span::styled(note_chars[0].to_string(), style));
+                        if is_active_string && global_col == get_target_cursor_col(app, active_box_range.0) {
+                            cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
+                        }
+                        visual_col_offset += 1;
+
                         if note_chars.len() > 1 {
-                            // If the note has a sharp/flat, we draw it in the next column
                             if consumed_next {
-                                // The next column was part of the number, so overwrite it
                                 string_chars.push(Span::styled(note_chars[1].to_string(), style));
-                                i += 1; // skip next column as we consumed it
+                                visual_col_offset += 1;
+                                i += 1;
                             } else {
-                                // The next column was likely a dash. We just override it visually!
                                 if i + 1 < chunk.len() {
                                     string_chars.push(Span::styled(note_chars[1].to_string(), style));
+                                    visual_col_offset += 1;
                                     i += 1;
                                 }
                             }
                         } else if consumed_next {
-                            // Fret was 2 digits (e.g. 10), but note is 1 char (e.g. D). We need to fill the second column with a dash
                             string_chars.push(Span::styled("-".to_string(), style));
+                            visual_col_offset += 1;
                             i += 1;
                         }
                     } else {
                         string_chars.push(Span::styled(c.to_string(), style));
+                        if is_active_string && global_col == get_target_cursor_col(app, active_box_range.0) {
+                            cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
+                        }
+                        visual_col_offset += 1;
                     }
                 } else {
                     string_chars.push(Span::styled(c.to_string(), style));
+                    if is_active_string && global_col == get_target_cursor_col(app, active_box_range.0) {
+                        cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
+                    }
+                    visual_col_offset += 1;
                 }
 
-                // Check cursor
-                if global_col == app.editor.cursor.col && string_idx == app.editor.cursor.string {
-                    cursor_visual_pos = Some((i + 2, start_y + string_idx)); // +2 for "E|"
+                let (_, box_end) = app.editor.document.box_range(global_col);
+                if !app.editor.document.columns[global_col].is_barline(app.editor.document.tuning.len())
+                    && global_col + 1 == box_end 
+                    && i + 1 < chunk.len() 
+                {
+                    let next_global_col = global_col + 1;
+                    if !app.editor.document.columns[next_global_col].is_barline(app.editor.document.tuning.len()) {
+                        let sep_selected = if let Some((s, e)) = visual_range {
+                            global_col >= s && next_global_col <= e
+                        } else {
+                            false
+                        };
+                        
+                        let sep_style = if sep_selected {
+                            Style::default().bg(Color::White).fg(Color::Black)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        
+                        string_chars.push(Span::styled("-", sep_style));
+                        visual_col_offset += 1;
+                    }
                 }
 
                 i += 1;
@@ -307,4 +361,11 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
     }
 
     (Text::from(lines), cursor_visual_pos)
+}
+
+fn get_target_cursor_col(app: &App, active_box_start: usize) -> usize {
+    match &app.mode {
+        Mode::Replace { buffer } => active_box_start + buffer.len(),
+        _ => active_box_start,
+    }
 }

@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::editor::Editor;
 
 fn is_valid_replace_char(c: char) -> bool {
-    c.is_ascii_digit() || "hpsxbr~t/\\-".contains(c)
+    c.is_ascii_digit() || "hpsxbr~t/\\- ".contains(c)
 }
 
 fn is_valid_continuous_replace_char(c: char) -> bool {
@@ -196,11 +196,11 @@ impl App {
             }
             KeyCode::Char('>') => {
                 self.count_buffer.clear();
-                self.editor.insert_column();
+                self.editor.insert_box();
             }
             KeyCode::Char('<') => {
                 self.count_buffer.clear();
-                self.editor.delete_column();
+                self.editor.delete_box();
             }
             KeyCode::Char('u') => {
                 self.count_buffer.clear();
@@ -227,16 +227,13 @@ impl App {
                 self.commit_replace(&buffer);
                 self.mode = Mode::Normal;
             }
-            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') if !buffer.is_empty() => {
+            KeyCode::Enter => {
                 self.commit_replace(&buffer);
-                match key.code {
-                    KeyCode::Char('h') => self.editor.move_cursor(-1, 0),
-                    KeyCode::Char('l') => self.editor.move_cursor(1, 0),
-                    KeyCode::Char('j') => self.editor.move_cursor(0, 1),
-                    KeyCode::Char('k') => self.editor.move_cursor(0, -1),
-                    _ => {}
-                }
                 self.mode = Mode::Normal;
+            }
+            KeyCode::Backspace => {
+                buffer.pop();
+                self.mode = Mode::Replace { buffer };
             }
             KeyCode::Char('|') => {
                 if buffer.is_empty() {
@@ -260,19 +257,13 @@ impl App {
                 // Buffer the character
                 buffer.push(c);
                 
-                // If it's not a digit, immediately commit and go back to normal
-                if !c.is_ascii_digit() {
+                // Commit automatically when we reach 3 characters
+                if buffer.len() >= 3 {
                     self.commit_replace(&buffer);
                     self.mode = Mode::Normal;
                 } else {
-                    // If it is a digit and length is 2, commit automatically
-                    if buffer.len() >= 2 {
-                        self.commit_replace(&buffer);
-                        self.mode = Mode::Normal;
-                    } else {
-                        // Keep buffering
-                        self.mode = Mode::Replace { buffer };
-                    }
+                    // Keep buffering
+                    self.mode = Mode::Replace { buffer };
                 }
             }
             _ => {
@@ -340,7 +331,7 @@ impl App {
 
     fn commit_replace(&mut self, buffer: &str) {
         if buffer.is_empty() { return; }
-        let chars: Vec<char> = buffer.chars().collect();
+        let chars: Vec<char> = buffer.chars().map(|c| if c == ' ' { '-' } else { c }).collect();
         self.editor.replace_chars(&chars);
     }
 
@@ -363,6 +354,20 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    pub fn get_visual_range(&self, start_col: usize) -> (usize, usize) {
+        let col1 = start_col;
+        let col2 = self.editor.cursor.col;
+        let min_c = col1.min(col2);
+        let max_c = col1.max(col2);
+        
+        let (_, active_box_end) = self.editor.document.box_range(col2);
+        let (_, start_box_end) = self.editor.document.box_range(start_col);
+        
+        let s = min_c;
+        let e = max_c.max(start_box_end).max(active_box_end) - 1;
+        (s, e)
     }
 
     fn handle_visual(&mut self, key: event::KeyEvent, start_col: usize) {
@@ -404,13 +409,15 @@ impl App {
             }
             KeyCode::Char('y') => {
                 self.count_buffer.clear();
-                self.editor.copy_columns(start_col, self.editor.cursor.col);
+                let (s, e) = self.get_visual_range(start_col);
+                self.editor.copy_columns(s, e);
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('x') | KeyCode::Char('d') => {
                 self.count_buffer.clear();
-                self.editor.copy_columns(start_col, self.editor.cursor.col);
-                self.editor.delete_columns_range(start_col, self.editor.cursor.col);
+                let (s, e) = self.get_visual_range(start_col);
+                self.editor.copy_columns(s, e);
+                self.editor.delete_columns_range(s, e);
                 self.mode = Mode::Normal;
             }
             _ => {
