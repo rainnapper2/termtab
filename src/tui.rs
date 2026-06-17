@@ -19,13 +19,27 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     let (tab_text, cursor_pos) = render_tab_document(app, chunks[0].width as usize);
     
+    let mut scroll_y = 0;
+    if let Some((_, cy)) = cursor_pos {
+        let visible_height = chunks[0].height.saturating_sub(2);
+        if cy as u16 > visible_height / 2 {
+            scroll_y = (cy as u16) - (visible_height / 2);
+        }
+    }
+
     let paragraph = Paragraph::new(tab_text)
-        .block(Block::default().borders(Borders::ALL).title(" TermTab "));
+        .block(Block::default().borders(Borders::ALL).title(" TermTab "))
+        .scroll((scroll_y, 0));
     
     f.render_widget(paragraph, chunks[0]);
 
-    if let Some((cx, cy)) = cursor_pos {
-        f.set_cursor(chunks[0].x + 1 + cx as u16, chunks[0].y + 1 + cy as u16);
+    if !matches!(app.mode, Mode::Help) {
+        if let Some((cx, cy)) = cursor_pos {
+            let actual_cy = (cy as u16).saturating_sub(scroll_y);
+            if actual_cy < chunks[0].height.saturating_sub(2) {
+                f.set_cursor(chunks[0].x + 1 + cx as u16, chunks[0].y + 1 + actual_cy);
+            }
+        }
     }
 
     // Status bar
@@ -39,7 +53,6 @@ pub fn draw(f: &mut Frame, app: &App) {
     };
 
     let status_style = Style::default().bg(Color::Blue).fg(Color::White);
-    let error_style = Style::default().bg(Color::Red).fg(Color::White);
 
     let status_layout = Layout::default()
         .direction(Direction::Horizontal)
