@@ -290,11 +290,64 @@ impl Editor {
         }
         self.save_state();
         let clip = self.document.clipboard.clone();
+        let num_strings = self.document.tuning.len();
         
-        // We use splice to insert the clipboard at the cursor.
-        let tail = self.document.columns.split_off(self.cursor.col);
-        self.document.columns.extend(clip);
-        self.document.columns.extend(tail);
+        let col = self.cursor.col;
+        
+        if self.document.columns[col].is_barline(num_strings) {
+            let m_len = 15;
+            let mut new_cols = Vec::new();
+            let mut i = 0;
+            while i < clip.len() {
+                let chunk = &clip[i.. (i + m_len).min(clip.len())];
+                new_cols.extend(chunk.to_vec());
+                if chunk.len() < m_len {
+                    let pad_len = m_len - chunk.len();
+                    new_cols.extend(vec![TabColumn::new(); pad_len]);
+                }
+                new_cols.push(TabColumn::barline(num_strings));
+                i += m_len;
+            }
+            
+            let tail = self.document.columns.split_off(col);
+            self.document.columns.extend(new_cols);
+            self.document.columns.extend(tail);
+        } else {
+            let m_start = self.document.measure_start_col(col);
+            let mut m_end = col;
+            while m_end < self.document.columns.len() && !self.document.columns[m_end].is_barline(num_strings) {
+                m_end += 1;
+            }
+            let m_len = 15;
+            
+            let k = col - m_start;
+            
+            let mut replacement = Vec::new();
+            
+            // 1. Left part padded
+            replacement.extend(self.document.columns[m_start..col].to_vec());
+            replacement.extend(vec![TabColumn::new(); m_len - k]);
+            replacement.push(TabColumn::barline(num_strings));
+            
+            // 2. Clipboard padded to measures
+            let mut i = 0;
+            while i < clip.len() {
+                let chunk = &clip[i.. (i + m_len).min(clip.len())];
+                replacement.extend(chunk.to_vec());
+                if chunk.len() < m_len {
+                    let pad_len = m_len - chunk.len();
+                    replacement.extend(vec![TabColumn::new(); pad_len]);
+                }
+                replacement.push(TabColumn::barline(num_strings));
+                i += m_len;
+            }
+            
+            // 3. Right part padded
+            replacement.extend(vec![TabColumn::new(); k]);
+            replacement.extend(self.document.columns[col..=m_end].to_vec());
+            
+            self.document.columns.splice(m_start..=m_end, replacement);
+        }
     }
 }
 
@@ -381,9 +434,23 @@ mod tests {
 
         ed.cursor.col = 6;
         ed.paste_columns();
-        assert_eq!(ed.document.columns[6].get_char(0), '9');
-        assert_eq!(ed.document.columns[7].get_char(0), '9');
-        assert_eq!(ed.document.columns[8].get_char(0), '9');
-        assert_eq!(ed.document.columns.len(), 68);
+        
+        // M1 (part 1): cols 0..5 (6 cols) + 9 blanks + barline (16 cols total)
+        assert_eq!(ed.document.columns[0].get_char(0), '9');
+        assert_eq!(ed.document.columns[1].get_char(0), '9');
+        assert_eq!(ed.document.columns[2].get_char(0), '9');
+        assert_eq!(ed.document.columns[15].get_char(0), '|');
+        
+        // M2 (pasted): clip (3 cols) + 12 blanks + barline (16 cols total)
+        assert_eq!(ed.document.columns[16].get_char(0), '9');
+        assert_eq!(ed.document.columns[17].get_char(0), '9');
+        assert_eq!(ed.document.columns[18].get_char(0), '9');
+        assert_eq!(ed.document.columns[31].get_char(0), '|');
+        
+        // M3 (part 2): 6 blanks + cols 6..14 (9 cols) + barline (16 cols total)
+        assert_eq!(ed.document.columns[32].get_char(0), '-');
+        assert_eq!(ed.document.columns[47].get_char(0), '|');
+        
+        assert_eq!(ed.document.columns.len(), 97);
     }
 }
