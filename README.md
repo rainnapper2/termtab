@@ -80,4 +80,4 @@ Press `:` in Normal Mode to open the command prompt.
 - `:q` - Quit (warns if there are unsaved changes).
 - `:q!` - Force quit and discard changes.
 - `:wq` - Save and quit.
-- `:<number>` - (e.g. `:120`) Instantly jump your cursor to that exact column index.
+- `:<number>` - (e.g. `:120`) Instantly jump your cursor to the start of measure 120.

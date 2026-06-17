@@ -21,6 +21,7 @@ pub struct App {
     pub saved_undo_len: usize,
     pub should_quit: bool,
     pub count_buffer: String,
+    pub key_log: String,
 }
 
 impl App {
@@ -35,6 +36,7 @@ impl App {
             saved_undo_len,
             should_quit: false,
             count_buffer: String::new(),
+            key_log: String::new(),
         }
     }
 
@@ -66,6 +68,24 @@ impl App {
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    let key_str = match key.code {
+                        KeyCode::Char(c) => c.to_string(),
+                        KeyCode::Esc => "<Esc>".to_string(),
+                        KeyCode::Enter => "<Enter>".to_string(),
+                        KeyCode::Backspace => "<Backspace>".to_string(),
+                        KeyCode::Tab => "<Tab>".to_string(),
+                        KeyCode::Left => "<Left>".to_string(),
+                        KeyCode::Right => "<Right>".to_string(),
+                        KeyCode::Up => "<Up>".to_string(),
+                        KeyCode::Down => "<Down>".to_string(),
+                        _ => format!("{:?}", key.code),
+                    };
+                    self.key_log.push_str(&key_str);
+                    if self.key_log.len() > 60 {
+                        let remove_len = self.key_log.len() - 60;
+                        self.key_log.drain(..remove_len);
+                    }
+
                     self.error_msg = None; // Clear error on next keypress
                     match &mut self.mode {
                         Mode::Normal => self.handle_normal(key),
@@ -179,7 +199,6 @@ impl App {
                 self.count_buffer.clear();
                 self.editor.paste_columns();
             }
-            KeyCode::Char('q') => self.should_quit = true,
             _ => {
                 // Clear buffer on invalid command
                 self.count_buffer.clear();
@@ -281,18 +300,52 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
             }
-            KeyCode::Char('h') => self.editor.move_cursor(-1, 0),
-            KeyCode::Char('l') => self.editor.move_cursor(1, 0),
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                self.count_buffer.push(c);
+            }
+            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Char('e') | KeyCode::Char('b') | KeyCode::Char('[') | KeyCode::Char(']') => {
+                let count = if self.count_buffer.is_empty() {
+                    1
+                } else {
+                    self.count_buffer.parse::<usize>().unwrap_or(1).max(1)
+                };
+                self.count_buffer.clear();
+
+                match key.code {
+                    KeyCode::Char('h') => self.editor.move_cursor(-(count as isize), 0),
+                    KeyCode::Char('l') => self.editor.move_cursor(count as isize, 0),
+                    KeyCode::Char('j') => self.editor.move_cursor(0, count as isize),
+                    KeyCode::Char('k') => self.editor.move_cursor(0, -(count as isize)),
+                    KeyCode::Char('w') => { for _ in 0..count { self.editor.jump_next_measure(); } }
+                    KeyCode::Char('b') => { for _ in 0..count { self.editor.jump_prev_measure(); } }
+                    KeyCode::Char('e') => { for _ in 0..count { self.editor.jump_end_measure(); } }
+                    KeyCode::Char(']') => {
+                        let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let wrap_width = if width > 4 { (width - 4) as usize } else { 80 };
+                        for _ in 0..count { self.editor.jump_next_row(wrap_width); }
+                    }
+                    KeyCode::Char('[') => {
+                        let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let wrap_width = if width > 4 { (width - 4) as usize } else { 80 };
+                        for _ in 0..count { self.editor.jump_prev_row(wrap_width); }
+                    }
+                    _ => {}
+                }
+            }
             KeyCode::Char('y') => {
+                self.count_buffer.clear();
                 self.editor.copy_columns(start_col, self.editor.cursor.col);
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('x') | KeyCode::Char('d') => {
+                self.count_buffer.clear();
                 self.editor.copy_columns(start_col, self.editor.cursor.col);
                 self.editor.delete_columns_range(start_col, self.editor.cursor.col);
                 self.mode = Mode::Normal;
             }
-            _ => {}
+            _ => {
+                self.count_buffer.clear();
+            }
         }
     }
 
@@ -317,8 +370,8 @@ impl App {
                     if self.save_file() {
                         self.should_quit = true;
                     }
-                } else if let Ok(col) = cmd.parse::<usize>() {
-                    self.editor.jump_to_col(col);
+                } else if let Ok(measure_num) = cmd.parse::<usize>() {
+                    self.editor.jump_to_measure(measure_num);
                 } else {
                     self.error_msg = Some("Invalid command".to_string());
                 }

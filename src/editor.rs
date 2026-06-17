@@ -10,7 +10,6 @@ pub struct Editor {
 }
 
 impl Editor {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             document: TabDocument::new(),
@@ -20,25 +19,7 @@ impl Editor {
         }
     }
 
-    pub fn new_with_measures() -> Self {
-        let mut ed = Self {
-            document: TabDocument { columns: Vec::new(), tuning: ['e', 'B', 'G', 'D', 'A', 'E'], clipboard: Vec::new() },
-            cursor: Cursor::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-        };
-        for i in 0..4 {
-            for _ in 0..15 {
-                ed.document.columns.push(TabColumn::new());
-            }
-            if i < 3 {
-                let mut bar = TabColumn::new();
-                bar.strings = ['|'; 6];
-                ed.document.columns.push(bar);
-            }
-        }
-        ed
-    }
+
 
     /// Save the current state to the undo stack and clear redo stack.
     fn save_state(&mut self) {
@@ -75,11 +56,14 @@ impl Editor {
         self.cursor.string = new_string;
     }
 
-    pub fn jump_to_col(&mut self, col: usize) {
-        while self.document.columns.len() <= col {
-            self.document.columns.push(TabColumn::new());
+    pub fn jump_to_measure(&mut self, target_measure: usize) {
+        for i in 0..self.document.columns.len() {
+            if self.document.is_measure_start(i) && self.document.measure_number_at_col(i) == target_measure {
+                self.cursor.col = i;
+                return;
+            }
         }
-        self.cursor.col = col;
+        self.cursor.col = self.document.columns.len().saturating_sub(1);
     }
 
     pub fn jump_next_measure(&mut self) {

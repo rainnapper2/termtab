@@ -45,10 +45,19 @@ pub struct TabDocument {
 
 impl TabDocument {
     pub fn new() -> Self {
-        // Start with an empty document of 80 columns.
+        // Start with 4 measures of 15 empty columns each
         let mut columns = Vec::new();
-        for _ in 0..80 {
-            columns.push(TabColumn::new());
+        for i in 0..4 {
+            for _ in 0..15 {
+                columns.push(TabColumn::new());
+            }
+            if i == 3 {
+                // Last measure ends with a double barline
+                columns.push(TabColumn::barline());
+                columns.push(TabColumn::barline());
+            } else {
+                columns.push(TabColumn::barline());
+            }
         }
         
         Self {
@@ -95,40 +104,65 @@ impl TabDocument {
         measure
     }
 
+    pub fn is_measure_start(&self, col_idx: usize) -> bool {
+        if col_idx == 0 {
+            return true;
+        }
+        self.columns[col_idx - 1].is_barline() && !self.columns[col_idx].is_barline()
+    }
+
     pub fn dump_to_string(&self, wrap_width: usize) -> String {
         let mut out = String::new();
         let chunks = self.calculate_chunks(wrap_width);
 
         for chunk_range in chunks {
             let chunk = &self.columns[chunk_range.clone()];
-            out.push_str(&format!("  [Measure: {}]\n", self.measure_number_at_col(chunk_range.start)));
 
+            let mut measure_lines: Vec<Vec<char>> = Vec::new();
             let mut annotation_lines: Vec<Vec<char>> = Vec::new();
-            for (i, col) in chunk.iter().enumerate() {
-                if let Some(text) = &col.annotation {
-                    let offset_i = i + 2;
-                    let mut placed = false;
-                    for a_line in &mut annotation_lines {
-                        let text_chars: Vec<char> = text.chars().collect();
-                        while a_line.len() <= offset_i + text_chars.len() {
-                            a_line.push(' ');
-                        }
-                        let is_free = a_line[offset_i..offset_i + text_chars.len()].iter().all(|&c| c == ' ');
-                        if is_free {
-                            for (j, &c) in text_chars.iter().enumerate() {
-                                a_line[offset_i + j] = c;
-                            }
-                            placed = true;
-                            break;
-                        }
+
+            let place_text = |text: &str, offset: usize, lines: &mut Vec<Vec<char>>| {
+                let mut placed = false;
+                for a_line in lines.iter_mut() {
+                    let text_chars: Vec<char> = text.chars().collect();
+                    while a_line.len() <= offset + text_chars.len() {
+                        a_line.push(' ');
                     }
-                    if !placed {
-                        let mut new_line = vec![' '; offset_i];
-                        let text_chars: Vec<char> = text.chars().collect();
-                        new_line.extend(text_chars);
-                        annotation_lines.push(new_line);
+                    let is_free = a_line[offset..offset + text_chars.len()].iter().all(|&c| c == ' ');
+                    if is_free {
+                        for (j, &c) in text_chars.iter().enumerate() {
+                            a_line[offset + j] = c;
+                        }
+                        placed = true;
+                        break;
                     }
                 }
+                if !placed {
+                    let mut new_line = vec![' '; offset];
+                    let text_chars: Vec<char> = text.chars().collect();
+                    new_line.extend(text_chars);
+                    lines.push(new_line);
+                }
+            };
+
+            for (i, col) in chunk.iter().enumerate() {
+                let global_col = chunk_range.start + i;
+                let offset_i = i + 2;
+
+                if self.is_measure_start(global_col) {
+                    let text = format!("[{}]", self.measure_number_at_col(global_col));
+                    place_text(&text, offset_i, &mut measure_lines);
+                }
+
+                if let Some(text) = &col.annotation {
+                    place_text(text, offset_i, &mut annotation_lines);
+                }
+            }
+
+            for m_line in measure_lines {
+                let s: String = m_line.into_iter().collect();
+                out.push_str(&s);
+                out.push('\n');
             }
 
             for a_line in annotation_lines {

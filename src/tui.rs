@@ -69,7 +69,17 @@ pub fn draw(f: &mut Frame, app: &App) {
     ]))
     .block(Block::default().borders(Borders::TOP));
 
-    let status_right = Paragraph::new("Type ? for help  ")
+    let status_right_text = if !app.key_log.is_empty() {
+        let max_len = 23;
+        if app.key_log.chars().count() > max_len {
+            app.key_log.chars().skip(app.key_log.chars().count() - max_len).collect()
+        } else {
+            app.key_log.clone()
+        }
+    } else {
+        "Type ? for help".to_string()
+    };
+    let status_right = Paragraph::new(format!("{}  ", status_right_text))
         .alignment(ratatui::layout::Alignment::Right)
         .style(Style::default().fg(Color::DarkGray))
         .block(Block::default().borders(Borders::TOP));
@@ -97,7 +107,7 @@ pub fn draw(f: &mut Frame, app: &App) {
             Line::from(""),
             Line::from("Files:"),
             Line::from("  :w, :q, :wq  Save, quit, save & quit"),
-            Line::from("  :120         Jump directly to column 120"),
+            Line::from("  :120         Jump directly to measure 120"),
             Line::from(""),
             Line::from(Span::styled("See the README.md for a full comprehensive guide.", Style::default().fg(Color::DarkGray))),
             Line::from(""),
@@ -158,41 +168,52 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
         let current_col = chunk_range.start;
         let chunk = &app.editor.document.columns[chunk_range];
 
-        // Column Header
-        let col_header = format!("  [Col: {}]", current_col);
-        lines.push(Line::from(Span::styled(col_header, Style::default().fg(Color::Cyan))));
-
         // 1. Process Annotations for this chunk
         // Stack them if they overlap.
+        let mut measure_lines: Vec<Vec<char>> = Vec::new();
         let mut annotation_lines: Vec<Vec<char>> = Vec::new();
-        for (i, col) in chunk.iter().enumerate() {
-            if let Some(text) = &col.annotation {
-                let mut placed = false;
-                let offset_i = i + 2; // Offset by 2 to align past the "e|" tuning prefix
-                for a_line in &mut annotation_lines {
-                    let text_chars: Vec<char> = text.chars().collect();
-                    // Ensure the line is long enough
-                    while a_line.len() <= offset_i + text_chars.len() {
-                        a_line.push(' ');
-                    }
-                    // Check if space is free
-                    let is_free = a_line[offset_i..offset_i + text_chars.len()].iter().all(|&c| c == ' ');
-                    if is_free {
-                        for (j, &c) in text_chars.iter().enumerate() {
-                            a_line[offset_i + j] = c;
-                        }
-                        placed = true;
-                        break;
-                    }
+
+        let place_text = |text: &str, offset: usize, lines: &mut Vec<Vec<char>>| {
+            let mut placed = false;
+            for a_line in lines.iter_mut() {
+                let text_chars: Vec<char> = text.chars().collect();
+                while a_line.len() <= offset + text_chars.len() {
+                    a_line.push(' ');
                 }
-                
-                if !placed {
-                    let mut new_line = vec![' '; offset_i];
-                    let text_chars: Vec<char> = text.chars().collect();
-                    new_line.extend(text_chars);
-                    annotation_lines.push(new_line);
+                let is_free = a_line[offset..offset + text_chars.len()].iter().all(|&c| c == ' ');
+                if is_free {
+                    for (j, &c) in text_chars.iter().enumerate() {
+                        a_line[offset + j] = c;
+                    }
+                    placed = true;
+                    break;
                 }
             }
+            if !placed {
+                let mut new_line = vec![' '; offset];
+                let text_chars: Vec<char> = text.chars().collect();
+                new_line.extend(text_chars);
+                lines.push(new_line);
+            }
+        };
+
+        for (i, col) in chunk.iter().enumerate() {
+            let global_col = current_col + i;
+            let offset_i = i + 2; // Offset by 2 to align past the "e|" tuning prefix
+
+            if app.editor.document.is_measure_start(global_col) {
+                let text = format!("[{}]", app.editor.document.measure_number_at_col(global_col));
+                place_text(&text, offset_i, &mut measure_lines);
+            }
+
+            if let Some(text) = &col.annotation {
+                place_text(text, offset_i, &mut annotation_lines);
+            }
+        }
+
+        for m_line in measure_lines {
+            let s: String = m_line.into_iter().collect();
+            lines.push(Line::from(Span::styled(s, Style::default().fg(Color::Cyan))));
         }
 
         for a_line in annotation_lines {

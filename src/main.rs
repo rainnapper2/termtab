@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("File not found: {}", filename);
             std::process::exit(1);
         }
-        Editor::new_with_measures()
+        Editor::new()
     };
 
     if print_mode {
