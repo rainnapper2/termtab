@@ -2,10 +2,19 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use std::time::Duration;
 use crate::editor::Editor;
 
+fn is_valid_replace_char(c: char) -> bool {
+    c.is_ascii_digit() || "hpsxbr~t/\\-".contains(c)
+}
+
+fn is_valid_continuous_replace_char(c: char) -> bool {
+    c.is_ascii_digit() || "hpsxbr~t/\\- |".contains(c)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mode {
     Normal,
     Replace { buffer: String },
+    ContinuousReplace,
     Prompt { buffer: String },
     Visual { start_col: usize },
     Command { buffer: String },
@@ -93,6 +102,9 @@ impl App {
                             let buf = buffer.clone();
                             self.handle_replace(key, buf);
                         }
+                        Mode::ContinuousReplace => {
+                            self.handle_continuous_replace(key);
+                        }
                         Mode::Prompt { buffer } => {
                             let buf = buffer.clone();
                             self.handle_prompt(key, buf);
@@ -167,6 +179,10 @@ impl App {
                     self.mode = Mode::Replace { buffer: String::new() };
                 }
             }
+            KeyCode::Char('R') => {
+                self.count_buffer.clear();
+                self.mode = Mode::ContinuousReplace;
+            }
             KeyCode::Char('A') => {
                 self.count_buffer.clear();
                 self.mode = Mode::Prompt { buffer: String::new() };
@@ -236,8 +252,7 @@ impl App {
                 }
             }
             KeyCode::Char(c) => {
-                let is_valid_char = c.is_ascii_digit() || "hpsxbr~t/\\-".contains(c);
-                if !is_valid_char {
+                if !is_valid_replace_char(c) {
                     self.error_msg = Some(format!("Invalid character: '{}'", c));
                     self.mode = Mode::Normal;
                     return;
@@ -263,6 +278,62 @@ impl App {
             }
             _ => {
                 self.commit_replace(&buffer);
+                self.mode = Mode::Normal;
+            }
+        }
+    }
+
+    fn handle_continuous_replace(&mut self, key: event::KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Backspace => {
+                let tuning_len = self.editor.document.tuning.len();
+                
+                // Move left by 1 if possible
+                if self.editor.cursor.col > 0 {
+                    self.editor.move_cursor(-1, 0);
+                }
+                
+                // Keep moving left if we land on a barline
+                while self.editor.cursor.col > 0 && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
+                    self.editor.move_cursor(-1, 0);
+                }
+                
+                // Reset the char to a dash if it's not a barline
+                if !self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
+                    self.editor.replace_chars(&['-']);
+                }
+            }
+            KeyCode::Char(c) => {
+                if !is_valid_continuous_replace_char(c) {
+                    self.error_msg = Some(format!("Invalid character: '{}'", c));
+                    self.mode = Mode::Normal;
+                    return;
+                }
+
+                if c == '|' {
+                    if let Err(e) = self.editor.insert_barline() {
+                        self.error_msg = Some(e.to_string());
+                        return;
+                    }
+                    self.editor.move_cursor(1, 0);
+                } else {
+                    let insert_c = if c == ' ' { '-' } else { c };
+                    self.editor.replace_chars(&[insert_c]);
+                    self.editor.move_cursor(1, 0);
+                }
+
+                // Skip any existing barlines so we don't accidentally overwrite them
+                let tuning_len = self.editor.document.tuning.len();
+                while self.editor.cursor.col < self.editor.document.columns.len() 
+                    && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
+                {
+                    self.editor.move_cursor(1, 0);
+                }
+            }
+            _ => {
                 self.mode = Mode::Normal;
             }
         }

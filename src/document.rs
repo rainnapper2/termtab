@@ -1,32 +1,89 @@
 use serde::{Serialize, Deserialize};
 
+use std::collections::BTreeMap;
+use serde::{Deserializer};
+
+fn deserialize_sparse_strings<'de, D>(deserializer: D) -> Result<std::collections::BTreeMap<usize, char>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    let mut map = std::collections::BTreeMap::new();
+    
+    match value {
+        serde_json::Value::Array(arr) => {
+            for (i, val) in arr.iter().enumerate() {
+                if let Some(s) = val.as_str() {
+                    let c = s.chars().next().unwrap_or('-');
+                    if c != '-' {
+                        map.insert(i, c);
+                    }
+                }
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            for (k, v) in obj {
+                if let Ok(idx) = k.parse::<usize>() {
+                    if let Some(s) = v.as_str() {
+                        let c = s.chars().next().unwrap_or('-');
+                        if c != '-' {
+                            map.insert(idx, c);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    
+    Ok(map)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TabColumn {
-    pub strings: [char; 6],
+    #[serde(deserialize_with = "deserialize_sparse_strings", skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub strings: BTreeMap<usize, char>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub annotation: Option<String>,
 }
 
 impl TabColumn {
     pub fn new() -> Self {
         Self {
-            strings: ['-'; 6],
+            strings: BTreeMap::new(),
             annotation: None,
         }
     }
 
-    pub fn barline() -> Self {
+    pub fn barline(num_strings: usize) -> Self {
+        let mut strings = BTreeMap::new();
+        for i in 0..num_strings {
+            strings.insert(i, '|');
+        }
         Self {
-            strings: ['|'; 6],
+            strings,
             annotation: None,
+        }
+    }
+
+    pub fn get_char(&self, idx: usize) -> char {
+        self.strings.get(&idx).copied().unwrap_or('-')
+    }
+
+    pub fn set_char(&mut self, idx: usize, c: char) {
+        if c == '-' {
+            self.strings.remove(&idx);
+        } else {
+            self.strings.insert(idx, c);
         }
     }
 
     pub fn is_blank(&self) -> bool {
-        self.strings.iter().all(|&c| c == '-') && self.annotation.is_none()
+        self.strings.is_empty() && self.annotation.is_none()
     }
 
-    pub fn is_barline(&self) -> bool {
-        self.strings.iter().all(|&c| c == '|')
+    pub fn is_barline(&self, num_strings: usize) -> bool {
+        self.strings.len() == num_strings && self.strings.values().all(|&c| c == '|')
     }
 }
 
@@ -39,12 +96,13 @@ impl Default for TabColumn {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TabDocument {
     pub columns: Vec<TabColumn>,
-    pub tuning: [char; 6],
+    pub tuning: Vec<char>,
     pub clipboard: Vec<TabColumn>,
 }
 
 impl TabDocument {
-    pub fn new() -> Self {
+    pub fn new(tuning: Vec<char>) -> Self {
+        let num_strings = tuning.len();
         // Start with 4 measures of 15 empty columns each
         let mut columns = Vec::new();
         for i in 0..4 {
@@ -53,18 +111,17 @@ impl TabDocument {
             }
             if i == 3 {
                 // Last measure ends with a double barline
-                columns.push(TabColumn::barline());
-                columns.push(TabColumn::barline());
+                columns.push(TabColumn::barline(num_strings));
+                columns.push(TabColumn::barline(num_strings));
             } else {
-                columns.push(TabColumn::barline());
+                columns.push(TabColumn::barline(num_strings));
             }
         }
         
         Self {
             columns,
-            // Standard guitar tuning (high e to low E). 
-            // 0 = highest string (e), 5 = lowest string (E)
-            tuning: ['e', 'B', 'G', 'D', 'A', 'E'],
+            // Configurable tuning dynamically parsed
+            tuning,
             clipboard: Vec::new(),
         }
     }
@@ -80,7 +137,7 @@ impl TabDocument {
                 if chunk_len >= 2 {
                     let curr_idx = current_col + chunk_len - 1;
                     let prev_idx = curr_idx - 1;
-                    if self.columns[prev_idx].is_barline() && self.columns[curr_idx].is_barline() {
+                    if self.columns[curr_idx].is_barline(self.tuning.len()) && self.columns[prev_idx].is_barline(self.tuning.len()) {
                         break;
                     }
                 }
@@ -95,8 +152,8 @@ impl TabDocument {
     pub fn measure_number_at_col(&self, col_idx: usize) -> usize {
         let mut measure = 1;
         for i in 0..col_idx {
-            if self.columns[i].is_barline() {
-                if i == 0 || !self.columns[i - 1].is_barline() {
+            if self.columns[i].is_barline(self.tuning.len()) {
+                if i == 0 || !self.columns[i - 1].is_barline(self.tuning.len()) {
                     measure += 1;
                 }
             }
@@ -108,7 +165,7 @@ impl TabDocument {
         if col_idx == 0 {
             return true;
         }
-        self.columns[col_idx - 1].is_barline() && !self.columns[col_idx].is_barline()
+        self.columns[col_idx - 1].is_barline(self.tuning.len()) && !self.columns[col_idx].is_barline(self.tuning.len())
     }
 
     pub fn dump_to_string(&self, wrap_width: usize) -> String {
@@ -171,11 +228,11 @@ impl TabDocument {
                 out.push('\n');
             }
 
-            for string_idx in 0..6 {
+            for string_idx in 0..self.tuning.len() {
                 let tuning_char = self.tuning[string_idx];
                 out.push_str(&format!("{}|", tuning_char));
                 for col in chunk {
-                    out.push(col.strings[string_idx]);
+                    out.push(col.get_char(string_idx));
                 }
                 out.push('\n');
             }
@@ -187,7 +244,7 @@ impl TabDocument {
 
 impl Default for TabDocument {
     fn default() -> Self {
-        Self::new()
+        Self::new(vec!['e', 'B', 'G', 'D', 'A', 'E'])
     }
 }
 

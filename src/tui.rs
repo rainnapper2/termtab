@@ -47,6 +47,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let mode_str = match &app.mode {
         Mode::Normal => "NORMAL".to_string(),
         Mode::Replace { buffer } => format!("REPLACE [{}]", buffer),
+        Mode::ContinuousReplace => "C-REPLACE".to_string(),
         Mode::Prompt { buffer } => format!("PROMPT [{}]", buffer),
         Mode::Visual { start_col } => format!("VISUAL [start: {}]", start_col),
         Mode::Command { buffer } => format!("COMMAND [:{}]", buffer),
@@ -224,7 +225,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
         let start_y = lines.len();
 
         // 2. Process Strings
-        for string_idx in 0..6 {
+        for string_idx in 0..app.editor.document.tuning.len() {
             let mut string_chars = Vec::new();
             
             // Add tuning letter
@@ -234,7 +235,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
             let mut i = 0;
             while i < chunk.len() {
                 let global_col = current_col + i;
-                let c = chunk[i].strings[string_idx];
+                let c = chunk[i].get_char(string_idx);
                 
                 let mut is_selected = false;
                 if let Mode::Visual { start_col } = app.mode {
@@ -255,21 +256,13 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                     // Try to parse fret
                     let mut fret_str = c.to_string();
                     let mut consumed_next = false;
-                    if i + 1 < chunk.len() && chunk[i+1].strings[string_idx].is_ascii_digit() {
-                        fret_str.push(chunk[i+1].strings[string_idx]);
+                    if i + 1 < chunk.len() && chunk[i+1].get_char(string_idx).is_ascii_digit() {
+                        fret_str.push(chunk[i+1].get_char(string_idx));
                         consumed_next = true;
                     }
                     
                     if let Ok(fret) = fret_str.parse::<u32>() {
-                        let note = match string_idx {
-                            0 => fret_to_note('e', fret, column_keys[global_col].as_deref()),
-                            1 => fret_to_note('B', fret, column_keys[global_col].as_deref()),
-                            2 => fret_to_note('G', fret, column_keys[global_col].as_deref()),
-                            3 => fret_to_note('D', fret, column_keys[global_col].as_deref()),
-                            4 => fret_to_note('A', fret, column_keys[global_col].as_deref()),
-                            5 => fret_to_note('E', fret, column_keys[global_col].as_deref()),
-                            _ => fret_to_note('E', fret, column_keys[global_col].as_deref()),
-                        };
+                        let note = fret_to_note(tuning_char, fret, column_keys[global_col].as_deref());
                         let note_chars: Vec<char> = note.chars().collect();
                         
                         string_chars.push(Span::styled(note_chars[0].to_string(), style));

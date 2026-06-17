@@ -10,9 +10,9 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new() -> Self {
+    pub fn new(tuning: Vec<char>) -> Self {
         Self {
-            document: TabDocument::new(),
+            document: TabDocument::new(tuning),
             cursor: Cursor::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -45,7 +45,7 @@ impl Editor {
 
     pub fn move_cursor(&mut self, dx: isize, dy: isize) {
         let new_col = (self.cursor.col as isize + dx).max(0) as usize;
-        let new_string = (self.cursor.string as isize + dy).clamp(0, 5) as usize;
+        let new_string = (self.cursor.string as isize + dy).clamp(0, self.document.tuning.len().saturating_sub(1) as isize) as usize;
         
         // Ensure the document expands if we move past the end
         while new_col >= self.document.columns.len() {
@@ -68,7 +68,7 @@ impl Editor {
 
     pub fn jump_next_measure(&mut self) {
         for i in (self.cursor.col + 1)..self.document.columns.len() {
-            if self.document.columns[i].is_barline() {
+            if self.document.columns[i].is_barline(self.document.tuning.len()) {
                 self.cursor.col = i + 1;
                 if self.cursor.col >= self.document.columns.len() {
                     self.document.columns.push(TabColumn::new());
@@ -85,12 +85,12 @@ impl Editor {
         
         // If we are already at the start of a measure (column right after a barline),
         // skip this barline to jump to the start of the previous measure.
-        if self.document.columns[search_start].is_barline() {
+        if self.document.columns[search_start].is_barline(self.document.tuning.len()) {
             search_start = search_start.saturating_sub(1);
         }
 
         for i in (0..=search_start).rev() {
-            if self.document.columns[i].is_barline() {
+            if self.document.columns[i].is_barline(self.document.tuning.len()) {
                 self.cursor.col = i + 1;
                 return;
             }
@@ -103,12 +103,12 @@ impl Editor {
         
         // If we are already at the end of a measure (column right before a barline),
         // skip the upcoming barline to jump to the end of the next measure.
-        if start_search < self.document.columns.len() && self.document.columns[start_search].is_barline() {
+        if start_search < self.document.columns.len() && self.document.columns[start_search].is_barline(self.document.tuning.len()) {
             start_search += 1;
         }
 
         for i in start_search..self.document.columns.len() {
-            if self.document.columns[i].is_barline() {
+            if self.document.columns[i].is_barline(self.document.tuning.len()) {
                 self.cursor.col = i.saturating_sub(1);
                 return;
             }
@@ -171,7 +171,7 @@ impl Editor {
         }
 
         for (i, &c) in chars.iter().enumerate() {
-            self.document.columns[self.cursor.col + i].strings[self.cursor.string] = c;
+            self.document.columns[self.cursor.col + i].set_char(self.cursor.string, c);
         }
     }
 
@@ -182,7 +182,7 @@ impl Editor {
         }
 
         self.save_state();
-        self.document.columns[self.cursor.col] = TabColumn::barline();
+        self.document.columns[self.cursor.col] = TabColumn::barline(self.document.tuning.len());
         Ok(())
     }
 
@@ -232,48 +232,48 @@ mod tests {
 
     #[test]
     fn test_editor_insert_delete_column() {
-        let mut ed = Editor::new();
-        assert_eq!(ed.document.columns.len(), 80);
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        assert_eq!(ed.document.columns.len(), 65); // 4 measures * 15 cols + 5 barlines = 65
         ed.insert_column();
-        assert_eq!(ed.document.columns.len(), 81);
+        assert_eq!(ed.document.columns.len(), 66);
         ed.undo();
-        assert_eq!(ed.document.columns.len(), 80);
+        assert_eq!(ed.document.columns.len(), 65);
         ed.redo();
-        assert_eq!(ed.document.columns.len(), 81);
+        assert_eq!(ed.document.columns.len(), 66);
 
         ed.delete_column();
-        assert_eq!(ed.document.columns.len(), 80);
+        assert_eq!(ed.document.columns.len(), 65);
     }
 
     #[test]
     fn test_editor_replace_chars() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
         ed.replace_chars(&['1', '1']);
-        assert_eq!(ed.document.columns[0].strings[0], '1');
-        assert_eq!(ed.document.columns[1].strings[0], '1');
-        assert_eq!(ed.document.columns[2].strings[0], '-');
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[1].get_char(0), '1');
+        assert_eq!(ed.document.columns[2].get_char(0), '-');
 
         ed.undo();
-        assert_eq!(ed.document.columns[0].strings[0], '-');
-        assert_eq!(ed.document.columns[1].strings[0], '-');
+        assert_eq!(ed.document.columns[0].get_char(0), '-');
+        assert_eq!(ed.document.columns[1].get_char(0), '-');
     }
 
     #[test]
     fn test_editor_copy_paste() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
         ed.replace_chars(&['9']);
         
         ed.copy_columns(0, 0);
         assert_eq!(ed.document.clipboard.len(), 1);
-        assert_eq!(ed.document.clipboard[0].strings[0], '9');
+        assert_eq!(ed.document.clipboard[0].get_char(0), '9');
 
         ed.cursor.col = 5;
         ed.paste_columns();
-        assert_eq!(ed.document.columns[5].strings[0], '9');
-        assert_eq!(ed.document.columns.len(), 81); // 80 original + 1 pasted
+        assert_eq!(ed.document.columns[5].get_char(0), '9');
+        assert_eq!(ed.document.columns.len(), 66);
     }
 }

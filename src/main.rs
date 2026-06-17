@@ -19,13 +19,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     let mut print_mode = false;
     let mut filename = String::new();
+    let mut tuning_str = String::from("eBGDAE"); // Default tuning
 
-    for arg in &args[1..] {
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
         if arg == "--print" {
             print_mode = true;
+        } else if arg == "--tuning" {
+            if i + 1 < args.len() {
+                tuning_str = args[i + 1].clone();
+                i += 1;
+            } else {
+                println!("Error: --tuning requires a value");
+                std::process::exit(1);
+            }
         } else {
             filename = arg.clone();
         }
+        i += 1;
     }
 
     if filename.is_empty() {
@@ -46,7 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("File not found: {}", filename);
             std::process::exit(1);
         }
-        Editor::new()
+        Editor::new(tuning_str.chars().collect())
     };
 
     if print_mode {
