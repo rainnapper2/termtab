@@ -1,15 +1,6 @@
 # TermTab
 
-TermTab is a lightning-fast, ergonomically-focused Vim-style terminal user interface for creating and editing guitar tabs. Built in Rust, it uses a 1D column-stream architecture that seamlessly wraps around your screen, providing a fluid text-editor-like experience for musical notation.
-
-## Features
-
-- **Vim-Style Navigation**: Instantly navigate your tabs using `h`, `j`, `k`, `l`, or jump measure-by-measure using `w`, `e`, and `b`. Numeric prefixes are fully supported (e.g. type `5l` to jump 5 columns right).
-- **Infinite Canvas**: The editor is completely unbounded. Columns wrap automatically based on your terminal width.
-- **Diatonic Note Mode**: Toggle note mode (`n`) to instantly translate all fret numbers into their corresponding diatonic note letters. 
-- **Key Signature Support**: Add textual annotations above columns (e.g., `Key: Bb Minor`). TermTab will intelligently adjust the note translation to use the appropriate sharps or flats for that specific key context moving forward!
-- **Undo/Redo**: Complete snapshot-based state tracking.
-- **Full File Persistence**: Projects save their entire state—including your cursor position and the complete undo/redo history—so you can pick up exactly where you left off.
+TermTab is a Vim-style terminal user interface for creating and editing guitar tabs. It treats musical tablature as a continuous stream of structural columns rather than a raw 2D text grid, allowing for precise editing, dynamic word-wrapping, and annotation tracking.
 
 ## Quick Start
 
@@ -19,6 +10,40 @@ You must provide a filename to launch TermTab. If the file doesn't exist, it wil
 cargo run my_song.json
 ```
 
+**Print Mode:**
+You can bypass the interactive editor and dump the fully formatted tablature directly to your terminal's standard output using the `--print` flag.
+
+```bash
+cargo run -- --print my_song.json
+```
+
+## Architecture & Data Models
+
+TermTab is built around a specialized data model that decouples the musical content from the visual layout.
+
+### `TabDocument`
+The core state of the editor. Rather than storing a massive 2D array of characters, the document is simply a 1D `Vec<TabColumn>`. This makes insertions, deletions, and undo/redo operations trivial and extremely reliable.
+
+### `TabColumn`
+A structural representation of a single vertical slice of time across all 6 strings. A column contains:
+- An array of characters representing the state of each string (e.g., fret numbers, barlines, or hyphens).
+- An optional text `annotation` bound specifically to that column.
+
+Because annotations are intrinsically bound to their respective `TabColumn`, shifting columns natively shifts the annotations perfectly without any complex index management.
+
+### Dynamic Rendering & Chunks
+The TUI reads the 1D stream of columns and dynamically groups them into **chunks** that word-wrap based on your current terminal width. 
+- **Double Barlines (`||`)**: If the word-wrapper detects two adjacent barlines, it will dynamically break the current visual block, giving you absolute control over measure layout.
+- **Annotation Stacking**: If multiple columns within the same chunk contain long text annotations that overlap horizontally, the renderer automatically calculates and stacks them onto new vertical lines.
+
+## Features
+
+- **Vim-Style Navigation**: Navigate your tabs using `h`, `j`, `k`, `l`, or jump measure-by-measure using `w`, `e`, and `b`. Numeric prefixes are fully supported (e.g. type `5l` to jump 5 columns right).
+- **Diatonic Note Mode**: Toggle note mode (`n`) to instantly translate all fret numbers into their corresponding diatonic note letters. 
+- **Key Signature Support**: Add textual annotations above columns (e.g., `Key: Bb Minor`). TermTab will intelligently adjust the note translation to use the appropriate sharps or flats for that specific key context moving forward.
+- **Undo/Redo**: Complete snapshot-based state tracking.
+- **Full File Persistence**: Projects save their entire state—including your cursor position and the complete undo/redo history—so you can pick up exactly where you left off.
+
 ## Command Cheatsheet
 
 ### Navigation (Normal Mode)
@@ -26,6 +51,7 @@ cargo run my_song.json
 - `w`: Jump forward to the start of the next measure.
 - `e`: Jump forward to the end of the current measure.
 - `b`: Jump backward to the start of the current/previous measure.
+- `]`, `[`: Jump the cursor down or up to the next/previous visual row.
 - `[number][command]`: Prefix a command with a number to multiply it (e.g. `10j` or `4w`).
 
 ### Editing (Normal Mode)
@@ -55,9 +81,3 @@ Press `:` in Normal Mode to open the command prompt.
 - `:q!` - Force quit and discard changes.
 - `:wq` - Save and quit.
 - `:<number>` - (e.g. `:120`) Instantly jump your cursor to that exact column index.
-
-## Architecture
-
-TermTab does not use a 2D chunked array. Instead, the document is an infinite `Vec<TabColumn>`. The TUI dynamically word-wraps this continuous stream into visual blocks. Because annotations are intrinsically bound to their respective `TabColumn`, shifting columns natively shifts the annotations perfectly without any complex index management. Overlapping annotations are automatically stacked onto new vertical lines by the renderer.
-
-If you manually type two adjacent barlines (`||`), the word-wrapper will dynamically detect it and break the current visual block, giving you absolute control over measure layout!
