@@ -9,6 +9,7 @@ pub enum Mode {
     Prompt { buffer: String },
     Visual { start_col: usize },
     Command { buffer: String },
+    Help,
 }
 
 pub struct App {
@@ -84,6 +85,14 @@ impl App {
                             let buf = buffer.clone();
                             self.handle_command(key, buf);
                         }
+                        Mode::Help => {
+                            match key.code {
+                                event::KeyCode::Esc | event::KeyCode::Char('?') | event::KeyCode::Char('q') => {
+                                    self.mode = Mode::Normal;
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }
@@ -135,6 +144,10 @@ impl App {
             KeyCode::Char('n') => {
                 self.count_buffer.clear();
                 self.note_mode = !self.note_mode;
+            }
+            KeyCode::Char('?') => {
+                self.count_buffer.clear();
+                self.mode = Mode::Help;
             }
             KeyCode::Char('>') => {
                 self.count_buffer.clear();

@@ -1,8 +1,8 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Clear},
     Frame,
 };
 use crate::app::{App, Mode};
@@ -35,21 +35,89 @@ pub fn draw(f: &mut Frame, app: &App) {
         Mode::Prompt { buffer } => format!("PROMPT [{}]", buffer),
         Mode::Visual { start_col } => format!("VISUAL [start: {}]", start_col),
         Mode::Command { buffer } => format!("COMMAND [:{}]", buffer),
+        Mode::Help => "HELP".to_string(),
     };
 
     let status_style = Style::default().bg(Color::Blue).fg(Color::White);
     let error_style = Style::default().bg(Color::Red).fg(Color::White);
 
-    let status_text = if let Some(err) = &app.error_msg {
-        Span::styled(format!(" ERROR: {} ", err), error_style)
-    } else {
-        Span::styled(format!(" {} | Note Mode: {} ", mode_str, if app.note_mode { "ON" } else { "OFF" }), status_style)
-    };
+    let status_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(10), Constraint::Length(25)])
+        .split(chunks[1]);
 
-    let status_bar = Paragraph::new(status_text)
+    let status_left = Paragraph::new(Line::from(vec![
+        Span::styled(format!(" MODE: {} ", mode_str), status_style),
+        Span::styled(
+            if let Some(msg) = &app.error_msg { format!(" | {} ", msg) } else { " | ".to_string() },
+            Style::default().fg(Color::Red),
+        ),
+    ]))
+    .block(Block::default().borders(Borders::TOP));
+
+    let status_right = Paragraph::new("Type ? for help  ")
+        .alignment(ratatui::layout::Alignment::Right)
+        .style(Style::default().fg(Color::DarkGray))
         .block(Block::default().borders(Borders::TOP));
-    
-    f.render_widget(status_bar, chunks[1]);
+
+    f.render_widget(status_left, status_layout[0]);
+    f.render_widget(status_right, status_layout[1]);
+
+    if let Mode::Help = app.mode {
+        let help_text = vec![
+            Line::from(Span::styled(" TermTab Cheatsheet ", Style::default().fg(Color::Cyan))),
+            Line::from(""),
+            Line::from("Navigation:"),
+            Line::from("  h, j, k, l   Move cursor left, down, up, right"),
+            Line::from("  w, e, b      Jump to next, end, or previous measure"),
+            Line::from("  5l, 3w       Numeric prefixes to multiply movements"),
+            Line::from(""),
+            Line::from("Editing:"),
+            Line::from("  r            Enter Replace mode (type digits or h,p,s,x,b,r,~,t,/,-)"),
+            Line::from("  v            Enter Visual mode (select columns)"),
+            Line::from("  y, d, p      Yank (copy), delete (cut), paste selected columns"),
+            Line::from("  >, <         Insert or delete column at cursor"),
+            Line::from("  A            Add text annotation (e.g., Key: C Major)"),
+            Line::from("  n            Toggle diatonic note translation (fret numbers -> notes)"),
+            Line::from("  u, Ctrl+R    Undo, Redo"),
+            Line::from(""),
+            Line::from("Files:"),
+            Line::from("  :w, :q, :wq  Save, quit, save & quit"),
+            Line::from("  :120         Jump directly to column 120"),
+            Line::from(""),
+            Line::from(Span::styled("See the README.md for a full comprehensive guide.", Style::default().fg(Color::DarkGray))),
+            Line::from(""),
+            Line::from(Span::styled("Press Esc or ? to close", Style::default().fg(Color::Gray))),
+        ];
+
+        let help_paragraph = Paragraph::new(help_text)
+            .block(Block::default().title(" Help ").borders(Borders::ALL))
+            .alignment(ratatui::layout::Alignment::Center);
+
+        let area = centered_rect(80, 80, f.size());
+        f.render_widget(Clear, area);
+        f.render_widget(help_paragraph, area);
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(usize, usize)>) {
