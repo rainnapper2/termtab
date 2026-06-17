@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use std::time::Duration;
 use crate::editor::Editor;
 
@@ -172,12 +172,11 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.count_buffer.clear();
-                // Check if Ctrl+R for redo
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.editor.redo();
-                } else {
-                    self.mode = Mode::Replace { buffer: String::new() };
-                }
+                self.mode = Mode::Replace { buffer: String::new() };
+            }
+            KeyCode::Char('U') => {
+                self.count_buffer.clear();
+                self.editor.redo();
             }
             KeyCode::Char('R') => {
                 self.count_buffer.clear();
