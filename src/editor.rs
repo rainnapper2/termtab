@@ -234,6 +234,19 @@ impl Editor {
         }
     }
 
+    pub fn clear_box(&mut self) {
+        let col = self.cursor.col;
+        let num_strings = self.document.tuning.len();
+        if self.document.columns[col].is_barline(num_strings) {
+            return;
+        }
+        self.save_state();
+        let (box_start, box_end) = self.document.box_range(col);
+        for c in &mut self.document.columns[box_start..box_end] {
+            c.clear();
+        }
+    }
+
     pub fn replace_chars(&mut self, chars: &[char]) {
         self.save_state();
         
@@ -485,5 +498,20 @@ mod tests {
         assert_eq!(ed.document.columns[47].get_char(0), '|');
         
         assert_eq!(ed.document.columns.len(), 81);
+    }
+
+    #[test]
+    fn test_editor_clear_box() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
+        ed.replace_chars(&['9', '9', '9']);
+        assert_eq!(ed.document.columns[0].get_char(0), '9');
+        
+        ed.clear_box();
+        assert_eq!(ed.document.columns[0].get_char(0), '-');
+        assert_eq!(ed.document.columns[1].get_char(0), '-');
+        assert_eq!(ed.document.columns[2].get_char(0), '-');
+        assert_eq!(ed.document.columns.len(), 65);
     }
 }

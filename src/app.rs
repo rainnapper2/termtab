@@ -202,6 +202,10 @@ impl App {
                 self.count_buffer.clear();
                 self.editor.delete_box();
             }
+            KeyCode::Char('x') => {
+                self.count_buffer.clear();
+                self.editor.clear_box();
+            }
             KeyCode::Char('u') => {
                 self.count_buffer.clear();
                 self.editor.undo();

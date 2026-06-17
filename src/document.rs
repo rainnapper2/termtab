@@ -78,6 +78,11 @@ impl TabColumn {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.strings.clear();
+        self.annotation = None;
+    }
+
     pub fn is_blank(&self) -> bool {
         self.strings.is_empty() && self.annotation.is_none()
     }
