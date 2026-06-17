@@ -16,11 +16,22 @@ use editor::Editor;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        println!("Usage: termtab <filename>");
+    
+    let mut print_mode = false;
+    let mut filename = String::new();
+
+    for arg in &args[1..] {
+        if arg == "--print" {
+            print_mode = true;
+        } else {
+            filename = arg.clone();
+        }
+    }
+
+    if filename.is_empty() {
+        println!("Usage: termtab [--print] <filename>");
         std::process::exit(1);
     }
-    let filename = args[1].clone();
 
     let editor = if let Ok(json) = std::fs::read_to_string(&filename) {
         match serde_json::from_str(&json) {
@@ -31,8 +42,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     } else {
+        if print_mode {
+            println!("File not found: {}", filename);
+            std::process::exit(1);
+        }
         Editor::new_with_measures()
     };
+
+    if print_mode {
+        let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+        let wrap_width = if width > 4 { (width - 4) as usize } else { 80 };
+        print!("{}", editor.document.dump_to_string(wrap_width));
+        return Ok(());
+    }
 
     // setup terminal
     enable_raw_mode()?;

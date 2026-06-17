@@ -82,6 +82,61 @@ impl TabDocument {
         }
         chunks
     }
+
+    pub fn dump_to_string(&self, wrap_width: usize) -> String {
+        let mut out = String::new();
+        let chunks = self.calculate_chunks(wrap_width);
+
+        for chunk_range in chunks {
+            let chunk = &self.columns[chunk_range.clone()];
+            out.push_str(&format!("  [Col: {}]\n", chunk_range.start));
+
+            let mut annotation_lines: Vec<Vec<char>> = Vec::new();
+            for (i, col) in chunk.iter().enumerate() {
+                if let Some(text) = &col.annotation {
+                    let offset_i = i + 2;
+                    let mut placed = false;
+                    for a_line in &mut annotation_lines {
+                        let text_chars: Vec<char> = text.chars().collect();
+                        while a_line.len() <= offset_i + text_chars.len() {
+                            a_line.push(' ');
+                        }
+                        let is_free = a_line[offset_i..offset_i + text_chars.len()].iter().all(|&c| c == ' ');
+                        if is_free {
+                            for (j, &c) in text_chars.iter().enumerate() {
+                                a_line[offset_i + j] = c;
+                            }
+                            placed = true;
+                            break;
+                        }
+                    }
+                    if !placed {
+                        let mut new_line = vec![' '; offset_i];
+                        let text_chars: Vec<char> = text.chars().collect();
+                        new_line.extend(text_chars);
+                        annotation_lines.push(new_line);
+                    }
+                }
+            }
+
+            for a_line in annotation_lines {
+                let s: String = a_line.into_iter().collect();
+                out.push_str(&s);
+                out.push('\n');
+            }
+
+            for string_idx in 0..6 {
+                let tuning_char = self.tuning[string_idx];
+                out.push_str(&format!("{}|", tuning_char));
+                for col in chunk {
+                    out.push(col.strings[string_idx]);
+                }
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+        out
+    }
 }
 
 impl Default for TabDocument {
