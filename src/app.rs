@@ -282,17 +282,16 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
             }
+            KeyCode::Enter => {
+                // Pressing enter sends to the next box (column in user view)
+                self.editor.move_cursor(1, 0);
+            }
             KeyCode::Backspace => {
                 let tuning_len = self.editor.document.tuning.len();
                 
-                // Move left by 1 if possible
+                // Move left by 1 column
                 if self.editor.cursor.col > 0 {
-                    self.editor.move_cursor(-1, 0);
-                }
-                
-                // Keep moving left if we land on a barline
-                while self.editor.cursor.col > 0 && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
-                    self.editor.move_cursor(-1, 0);
+                    self.editor.move_cursor_cols(-1, 0);
                 }
                 
                 // Reset the char to a dash if it's not a barline
@@ -312,24 +311,14 @@ impl App {
                         self.error_msg = Some(e.to_string());
                         return;
                     }
-                    self.editor.move_cursor(1, 0);
+                    self.editor.move_cursor_cols(1, 0);
                 } else {
                     let insert_c = if c == ' ' { '-' } else { c };
                     self.editor.replace_chars(&[insert_c]);
-                    self.editor.move_cursor(1, 0);
-                }
-
-                // Skip any existing barlines so we don't accidentally overwrite them
-                let tuning_len = self.editor.document.tuning.len();
-                while self.editor.cursor.col < self.editor.document.columns.len() 
-                    && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
-                {
-                    self.editor.move_cursor(1, 0);
+                    self.editor.move_cursor_cols(1, 0);
                 }
             }
-            _ => {
-                self.mode = Mode::Normal;
-            }
+            _ => {}
         }
     }
 

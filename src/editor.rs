@@ -108,6 +108,43 @@ impl Editor {
         self.cursor.string = new_string;
     }
 
+    pub fn move_cursor_cols(&mut self, dx: isize, dy: isize) {
+        let new_string = (self.cursor.string as isize + dy).clamp(0, self.document.tuning.len().saturating_sub(1) as isize) as usize;
+        
+        let mut new_col = self.cursor.col;
+        if dx != 0 {
+            let direction = dx.signum();
+            let steps = dx.abs();
+            let num_strings = self.document.tuning.len();
+            for _ in 0..steps {
+                if direction > 0 {
+                    new_col += 1;
+                    while new_col < self.document.columns.len() && self.document.columns[new_col].is_barline(num_strings) {
+                        new_col += 1;
+                    }
+                } else {
+                    if new_col > 0 {
+                        new_col -= 1;
+                        while new_col > 0 && self.document.columns[new_col].is_barline(num_strings) {
+                            new_col -= 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        while new_col >= self.document.columns.len() {
+            let num_strings = self.document.tuning.len();
+            for _ in 0..15 {
+                self.document.columns.push(TabColumn::new());
+            }
+            self.document.columns.push(TabColumn::barline(num_strings));
+        }
+
+        self.cursor.col = new_col;
+        self.cursor.string = new_string;
+    }
+
     pub fn jump_to_measure(&mut self, target_measure: usize) {
         for i in 0..self.document.columns.len() {
             if self.document.is_measure_start(i) && self.document.measure_number_at_col(i) == target_measure {
@@ -513,5 +550,24 @@ mod tests {
         assert_eq!(ed.document.columns[1].get_char(0), '-');
         assert_eq!(ed.document.columns[2].get_char(0), '-');
         assert_eq!(ed.document.columns.len(), 65);
+    }
+
+    #[test]
+    fn test_editor_move_cursor_cols() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        
+        ed.move_cursor_cols(1, 0);
+        assert_eq!(ed.cursor.col, 1);
+        
+        ed.move_cursor_cols(2, 0);
+        assert_eq!(ed.cursor.col, 3);
+        
+        ed.cursor.col = 14;
+        ed.move_cursor_cols(1, 0);
+        assert_eq!(ed.cursor.col, 16);
+        
+        ed.move_cursor_cols(-1, 0);
+        assert_eq!(ed.cursor.col, 14);
     }
 }
