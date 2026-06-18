@@ -813,59 +813,85 @@ impl Editor {
                 continue;
             }
             
-            let (box_start, box_end) = self.document.box_range(col);
-            let box_size = box_end - box_start;
+            let (box_start, mut box_end) = self.document.box_range(col);
             
-            let mut max_width = 1;
-            for string_idx in 0..num_strings {
-                let tuning_char = self.document.tuning[string_idx];
-                let mut fret_str = String::new();
-                for col_idx in box_start..box_end {
-                    let c = self.document.columns[col_idx].get_char(string_idx);
-                    if c.is_ascii_digit() {
-                        fret_str.push(c);
+            let mut i = box_start;
+            while i < box_end {
+                let mut max_group_len = 0;
+                let mut needs_accidental = false;
+                
+                for string_idx in 0..num_strings {
+                    if self.document.columns[i].get_char(string_idx).is_ascii_digit() {
+                        let is_start = i == box_start || !self.document.columns[i - 1].get_char(string_idx).is_ascii_digit();
+                        if is_start {
+                            let mut len = 1;
+                            while i + len < box_end && self.document.columns[i + len].get_char(string_idx).is_ascii_digit() {
+                                len += 1;
+                            }
+                            max_group_len = max_group_len.max(len);
+                            
+                            let mut fret_str = String::new();
+                            for k in 0..len {
+                                fret_str.push(self.document.columns[i + k].get_char(string_idx));
+                            }
+                            if let Ok(fret) = fret_str.parse::<u32>() {
+                                let tuning_char = self.document.tuning[string_idx];
+                                let key = self.document.get_key_signature_at(box_start);
+                                let note = fret_to_note(tuning_char, fret, key.as_deref());
+                                if note.len() > 1 {
+                                    needs_accidental = true;
+                                }
+                            }
+                        }
                     }
                 }
-                if let Ok(fret) = fret_str.parse::<u32>() {
-                    let key = self.document.get_key_signature_at(box_start);
-                    let note = fret_to_note(tuning_char, fret, key.as_deref());
-                    if note.len() > 1 {
-                        max_width = 2;
+                
+                if needs_accidental && max_group_len > 0 {
+                    let required_width = 2;
+                    if required_width > max_group_len {
+                        let grow_by = required_width - max_group_len;
+                        for _ in 0..grow_by {
+                            let mut new_col = TabColumn::new();
+                            new_col.is_box_start = false;
+                            self.document.columns.insert(i + max_group_len, new_col);
+                        }
+                        box_end += grow_by;
+                    }
+                    
+                    for string_idx in 0..num_strings {
+                        if self.document.columns[i].get_char(string_idx).is_ascii_digit() {
+                            let is_start = i == box_start || !self.document.columns[i - 1].get_char(string_idx).is_ascii_digit();
+                            if is_start {
+                                let mut fret_str = String::new();
+                                let mut len = 1;
+                                while i + len < box_end && self.document.columns[i + len].get_char(string_idx).is_ascii_digit() {
+                                    len += 1;
+                                }
+                                for k in 0..len {
+                                    fret_str.push(self.document.columns[i + k].get_char(string_idx));
+                                }
+                                if let Ok(fret) = fret_str.parse::<u32>() {
+                                    let tuning_char = self.document.tuning[string_idx];
+                                    let key = self.document.get_key_signature_at(box_start);
+                                    let note = fret_to_note(tuning_char, fret, key.as_deref());
+                                    if note.len() > 1 {
+                                        let accidental = note.chars().nth(1).unwrap();
+                                        self.document.columns[i + len].set_char(string_idx, accidental);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    i += max_group_len + 1;
+                } else {
+                    if max_group_len > 0 {
+                        i += max_group_len;
+                    } else {
+                        i += 1;
                     }
                 }
             }
-            
-            let mut current_box_end = box_end;
-            if max_width > box_size {
-                let grow_by = max_width - box_size;
-                for _ in 0..grow_by {
-                    let mut new_col = TabColumn::new();
-                    new_col.is_box_start = false;
-                    self.document.columns.insert(current_box_end, new_col);
-                }
-                current_box_end += grow_by;
-            }
-            
-            for string_idx in 0..num_strings {
-                let tuning_char = self.document.tuning[string_idx];
-                let mut fret_str = String::new();
-                for col_idx in box_start..box_end {
-                    let c = self.document.columns[col_idx].get_char(string_idx);
-                    if c.is_ascii_digit() {
-                        fret_str.push(c);
-                    }
-                }
-                if let Ok(fret) = fret_str.parse::<u32>() {
-                    let key = self.document.get_key_signature_at(box_start);
-                    let note = fret_to_note(tuning_char, fret, key.as_deref());
-                    if note.len() > 1 {
-                        let accidental = note.chars().nth(1).unwrap();
-                        self.document.columns[box_start + 1].set_char(string_idx, accidental);
-                    }
-                }
-            }
-            
-            col = current_box_end;
+            col = box_end;
         }
     }
 

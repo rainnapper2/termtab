@@ -427,4 +427,36 @@ mod tests {
         let d_line_str: String = d_line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(d_line_str.starts_with("D|D--E-E-"));
     }
+
+    #[test]
+    fn test_render_note_mode_slides() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.string = 1;
+        app.editor.cursor.col = 0;
+        
+        app.editor.expand_active_box(); // size 2
+        app.editor.expand_active_box(); // size 3
+        app.editor.expand_active_box(); // size 4
+        app.editor.expand_active_box(); // size 5
+        app.editor.expand_active_box(); // size 6
+        app.editor.expand_active_box(); // size 7
+        
+        app.editor.replace_chars(&['2', '/', '2', '/', '2', '/', '2']).unwrap();
+        app.editor.adjust_box_to_fit(0);
+        
+        app.note_mode = true;
+        app.editor.transform_to_note_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let b_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("B|")
+        }).unwrap();
+        
+        let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(b_line_str.starts_with("B|C#/C#/C#/C#"), "Actual: {}", b_line_str);
+    }
 }
