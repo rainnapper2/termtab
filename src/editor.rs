@@ -572,6 +572,41 @@ impl Editor {
         Ok(())
     }
 
+    pub fn replace_char_in_box(&mut self, c: char) -> Result<(), &'static str> {
+        let col = self.cursor.col;
+        let string = self.cursor.string;
+        let num_strings = self.document.tuning.len();
+        if col < self.document.columns.len() && self.document.columns[col].is_barline(num_strings) {
+            return Err("Cannot replace inside a barline");
+        }
+        
+        if col >= self.document.columns.len() {
+            self.document.append_measure();
+        }
+        
+        if self.check_adjacency_after_insert(col, string, c, true) {
+            return Err("Cannot have more than 2 consecutive digits");
+        }
+        
+        self.save_state();
+        
+        self.document.columns[col].set_char(string, c);
+        
+        let (_, box_end) = self.document.box_range(col);
+        if col + 1 == box_end {
+            let mut new_col = TabColumn::new();
+            new_col.is_box_start = false;
+            self.document.columns.insert(col + 1, new_col);
+        }
+        
+        self.cursor.col += 1;
+        
+        let (target, current) = self.get_target_and_current_box_size(col);
+        self.apply_box_adjustment(col, target, current, false);
+        
+        Ok(())
+    }
+
     pub fn delete_char_before_cursor(&mut self) {
         if self.cursor.col == 0 { return; }
         let col = self.cursor.col;
@@ -646,20 +681,7 @@ impl Editor {
         Ok(())
     }
 
-    pub fn replace_chars_and_adjust(&mut self, chars: &[char]) -> Result<(), &'static str> {
-        let col = self.cursor.col;
-        let string = self.cursor.string;
-        
-        if self.check_adjacency_after_replace(col, string, chars) {
-            return Err("Cannot have more than 2 consecutive digits");
-        }
-        
-        self.save_state();
-        self.replace_chars_impl(chars);
-        let (target, current) = self.get_target_and_current_box_size(col);
-        self.apply_box_adjustment(col, target, current, true);
-        Ok(())
-    }
+
 
     pub fn insert_barline(&mut self) -> Result<(), &'static str> {
         let is_blank = self.document.columns[self.cursor.col].is_blank();

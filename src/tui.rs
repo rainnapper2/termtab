@@ -47,7 +47,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let mode_str = match &app.mode {
         Mode::Normal => "NORMAL".to_string(),
         Mode::Insert => "INSERT".to_string(),
-        Mode::Replace { buffer } => format!("REPLACE [{}]", buffer),
+        Mode::Replace => "REPLACE".to_string(),
         Mode::ContinuousReplace => "C-REPLACE".to_string(),
         Mode::Prompt { buffer } => format!("PROMPT [{}]", buffer),
         Mode::Visual { start_col } => format!("VISUAL [start: {}]", start_col),
@@ -277,20 +277,9 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                     !app.editor.document.columns[global_col].is_barline(app.editor.document.tuning.len()) &&
                     global_col >= active_box_range.0 && global_col < active_box_range.1;
 
-                let mut c = chunk[i].get_char(string_idx);
-
-                let mut is_preview = false;
+                let c = chunk[i].get_char(string_idx);
                 
-                if let Mode::Replace { buffer } = &app.mode {
-                    if is_in_active_box {
-                        let buf_idx = global_col - active_box_range.0;
-                        if buf_idx < buffer.len() {
-                            c = buffer.chars().nth(buf_idx).unwrap();
-                            if c == ' ' { c = '-'; }
-                            is_preview = true;
-                        }
-                    }
-                }
+
 
                 let style = if is_selected {
                     Style::default().bg(Color::White).fg(Color::Black)
@@ -300,7 +289,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                     Style::default()
                 };
 
-                if app.note_mode && c.is_ascii_digit() && !is_preview {
+                if app.note_mode && c.is_ascii_digit() {
                     let mut fret_str = c.to_string();
                     let mut consumed_next = false;
                     if i + 1 < chunk.len() && !chunk[i+1].is_box_start && chunk[i+1].get_char(string_idx).is_ascii_digit() {
@@ -313,7 +302,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                         let note_chars: Vec<char> = note.chars().collect();
                         
                         string_chars.push(Span::styled(note_chars[0].to_string(), style));
-                        if is_active_string && global_col == get_target_cursor_col(app, active_box_range.0) {
+                        if is_active_string && global_col == app.editor.cursor.col {
                             cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
                         }
                         visual_col_offset += 1;
@@ -337,14 +326,14 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                         }
                     } else {
                         string_chars.push(Span::styled(c.to_string(), style));
-                        if is_active_string && global_col == get_target_cursor_col(app, active_box_range.0) {
+                        if is_active_string && global_col == app.editor.cursor.col {
                             cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
                         }
                         visual_col_offset += 1;
                     }
                 } else {
                     string_chars.push(Span::styled(c.to_string(), style));
-                    if is_active_string && global_col == get_target_cursor_col(app, active_box_range.0) {
+                    if is_active_string && global_col == app.editor.cursor.col {
                         cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
                     }
                     visual_col_offset += 1;
@@ -388,12 +377,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
     (Text::from(lines), cursor_visual_pos)
 }
 
-fn get_target_cursor_col(app: &App, active_box_start: usize) -> usize {
-    match &app.mode {
-        Mode::Replace { buffer } => active_box_start + buffer.len(),
-        _ => app.editor.cursor.col,
-    }
-}
+
 
 #[cfg(test)]
 mod tests {
