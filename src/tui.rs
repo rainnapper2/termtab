@@ -349,15 +349,16 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                     visual_col_offset += 1;
                 }
 
-                let (_, box_end) = app.editor.document.box_range(global_col);
-                if !app.editor.document.columns[global_col].is_barline(app.editor.document.tuning.len())
-                    && global_col + 1 == box_end 
+                let eval_col = current_col + i;
+                let (_, box_end) = app.editor.document.box_range(eval_col);
+                if !app.editor.document.columns[eval_col].is_barline(app.editor.document.tuning.len())
+                    && eval_col + 1 == box_end 
                     && i + 1 < chunk.len() 
                 {
-                    let next_global_col = global_col + 1;
+                    let next_global_col = eval_col + 1;
                     if !app.editor.document.columns[next_global_col].is_barline(app.editor.document.tuning.len()) {
                         let sep_selected = if let Some((s, e)) = visual_range {
-                            global_col >= s && next_global_col <= e
+                            eval_col >= s && next_global_col <= e
                         } else {
                             false
                         };
@@ -420,6 +421,6 @@ mod tests {
         }).unwrap();
         
         let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(e_line_str, "e|E-/E--------------|---------------|---------------|---------------||");
+        assert_eq!(e_line_str, "e|E-/E---------------|---------------|---------------|---------------||");
     }
 }
