@@ -23,7 +23,7 @@ impl Editor {
 
 
     /// Save the current state to the undo stack and clear redo stack.
-    fn save_state(&mut self) {
+    pub fn save_state(&mut self) {
         self.undo_stack.push((self.document.clone(), self.cursor));
         self.redo_stack.clear();
     }
