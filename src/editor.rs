@@ -818,7 +818,7 @@ impl Editor {
             let mut i = box_start;
             while i < box_end {
                 let mut max_group_len = 0;
-                let mut needs_accidental = false;
+                let mut max_required_width = 0;
                 
                 for string_idx in 0..num_strings {
                     if self.document.columns[i].get_char(string_idx).is_ascii_digit() {
@@ -838,26 +838,24 @@ impl Editor {
                                 let tuning_char = self.document.tuning[string_idx];
                                 let key = self.document.get_key_signature_at(box_start);
                                 let note = fret_to_note(tuning_char, fret, key.as_deref());
-                                if note.len() > 1 {
-                                    needs_accidental = true;
-                                }
+                                let req_width = len + if note.len() > 1 { 1 } else { 0 };
+                                max_required_width = max_required_width.max(req_width);
                             }
                         }
                     }
                 }
                 
-                if needs_accidental && max_group_len > 0 {
-                    let required_width = 2;
-                    if required_width > max_group_len {
-                        let grow_by = required_width - max_group_len;
-                        for _ in 0..grow_by {
-                            let mut new_col = TabColumn::new();
-                            new_col.is_box_start = false;
-                            self.document.columns.insert(i + max_group_len, new_col);
-                        }
-                        box_end += grow_by;
+                if max_required_width > max_group_len {
+                    let grow_by = max_required_width - max_group_len;
+                    for _ in 0..grow_by {
+                        let mut new_col = TabColumn::new();
+                        new_col.is_box_start = false;
+                        self.document.columns.insert(i + max_group_len, new_col);
                     }
-                    
+                    box_end += grow_by;
+                }
+                
+                if max_group_len > 0 {
                     for string_idx in 0..num_strings {
                         if self.document.columns[i].get_char(string_idx).is_ascii_digit() {
                             let is_start = i == box_start || !self.document.columns[i - 1].get_char(string_idx).is_ascii_digit();
@@ -882,14 +880,9 @@ impl Editor {
                             }
                         }
                     }
-                    i += max_group_len + 1;
-                } else {
-                    if max_group_len > 0 {
-                        i += max_group_len;
-                    } else {
-                        i += 1;
-                    }
                 }
+                
+                i += 1;
             }
             col = box_end;
         }

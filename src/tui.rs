@@ -470,4 +470,67 @@ mod tests {
         let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(b_line_str.starts_with("B|2/2/2/2"), "Actual after toggle off: {}", b_line_str);
     }
+
+    #[test]
+    fn test_render_note_mode_non_aligned_groups() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.col = 0;
+        app.editor.expand_active_box(); // size 2
+        app.editor.expand_active_box(); // size 3
+        app.editor.expand_active_box(); // size 4
+        app.editor.expand_active_box(); // size 5
+        app.editor.expand_active_box(); // size 6
+        app.editor.expand_active_box(); // size 7
+        app.editor.expand_active_box(); // size 8
+        
+        app.editor.cursor.string = 0; // e string
+        app.editor.replace_chars(&['-', '1', '2']).unwrap();
+        
+        app.editor.cursor.string = 1; // B string
+        app.editor.replace_chars(&['2', '/', '2', '/', '2', '/', '2']).unwrap();
+        
+        app.editor.cursor.string = 3; // D string
+        app.editor.replace_chars(&['1', '/', '1', '/', '1', '/', '1']).unwrap();
+        
+        app.editor.cursor.string = 4; // A string
+        app.editor.replace_chars(&['3', '/', '3', '/', '3', '/', '3']).unwrap();
+        
+        app.editor.adjust_box_to_fit(0);
+        
+        app.note_mode = true;
+        app.editor.transform_to_note_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("e|")
+        }).unwrap();
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let b_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("B|")
+        }).unwrap();
+        let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let d_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("D|")
+        }).unwrap();
+        let d_line_str: String = d_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let a_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("A|")
+        }).unwrap();
+        let a_line_str: String = a_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        assert!(b_line_str.starts_with("B|C#/C#/C#/C#"), "Actual B: {}", b_line_str);
+        assert!(d_line_str.starts_with("D|D#/D#/D#/D#"), "Actual D: {}", d_line_str);
+        assert!(e_line_str.starts_with("e|--E--"), "Actual e: {}", e_line_str);
+        assert!(a_line_str.starts_with("A|C-/C-/C-/C-"), "Actual A: {}", a_line_str);
+    }
 }
