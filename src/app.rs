@@ -195,35 +195,7 @@ impl App {
             }
             KeyCode::Char('A') => {
                 self.count_buffer.clear();
-                let string = self.editor.cursor.string;
-                let mut last_note_col = None;
-                let num_strings = self.editor.document.tuning.len();
-                for col in (0..self.editor.document.columns.len()).rev() {
-                    if !self.editor.document.columns[col].is_barline(num_strings) {
-                        if self.editor.document.columns[col].get_char(string) != '-' {
-                            last_note_col = Some(col);
-                            break;
-                        }
-                    }
-                }
-                
-                if let Some(col) = last_note_col {
-                    self.editor.cursor.col = col;
-                    self.editor.cursor.col += 1;
-                    let tuning_len = self.editor.document.tuning.len();
-                    while self.editor.cursor.col < self.editor.document.columns.len()
-                        && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len)
-                    {
-                        self.editor.cursor.col += 1;
-                    }
-                    if self.editor.cursor.col >= self.editor.document.columns.len() {
-                        self.editor.save_state();
-                        self.editor.document.append_measure();
-                    }
-                } else {
-                    self.editor.cursor.col = 0;
-                }
-                self.mode = Mode::Insert;
+                self.mode = Mode::Prompt { buffer: String::new() };
             }
             KeyCode::Char('r') => {
                 self.count_buffer.clear();
@@ -236,10 +208,6 @@ impl App {
             KeyCode::Char('R') => {
                 self.count_buffer.clear();
                 self.mode = Mode::ContinuousReplace;
-            }
-            KeyCode::Char('t') => {
-                self.count_buffer.clear();
-                self.mode = Mode::Prompt { buffer: String::new() };
             }
             KeyCode::Char('n') => {
                 self.count_buffer.clear();
@@ -370,9 +338,6 @@ impl App {
                 if !self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
                     self.editor.replace_chars(&['-']).unwrap();
                 }
-            }
-            KeyCode::Insert => {
-                self.mode = Mode::Insert;
             }
             KeyCode::Char(c) => {
                 if !is_valid_continuous_replace_char(c) {
@@ -584,9 +549,6 @@ impl App {
             KeyCode::Backspace => {
                 self.editor.delete_char_before_cursor();
             }
-            KeyCode::Insert => {
-                self.mode = Mode::ContinuousReplace;
-            }
             KeyCode::Char(c) => {
                 if !is_valid_replace_char(c) {
                     self.error_msg = Some(format!("Invalid character: '{}'", c));
@@ -634,29 +596,12 @@ mod tests {
         
         app.handle_insert(press_key(KeyCode::Esc));
         assert_eq!(app.editor.cursor.col, 1);
-        
-        app.editor.cursor.col = 0;
-        
-        app.handle_normal(press_key(KeyCode::Char('A')));
-        assert_eq!(app.mode, Mode::Insert);
-        assert_eq!(app.editor.cursor.col, 2);
     }
 
     #[test]
-    fn test_app_insert_toggle_and_replace_growth() {
+    fn test_app_continuous_replace_growth() {
         let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         let mut app = App::new(ed, "test.json".to_string());
-        
-        app.handle_normal(press_key(KeyCode::Char('i')));
-        assert_eq!(app.mode, Mode::Insert);
-        
-        app.handle_insert(press_key(KeyCode::Insert));
-        assert_eq!(app.mode, Mode::ContinuousReplace);
-        
-        app.handle_continuous_replace(press_key(KeyCode::Insert));
-        assert_eq!(app.mode, Mode::Insert);
-        
-        app.handle_insert(press_key(KeyCode::Esc));
         
         app.editor.cursor.col = 7;
         
