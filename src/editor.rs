@@ -1,4 +1,4 @@
-use crate::document::{TabColumn, TabDocument, Cursor, DEFAULT_MEASURE_LEN, DEFAULT_BOX_LEN};
+use crate::document::{TabColumn, TabDocument, Cursor, DEFAULT_MEASURE_LEN};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
@@ -43,69 +43,9 @@ impl Editor {
         }
     }
 
-    fn next_box_col(&self, col: usize, direction: isize) -> usize {
-        let num_strings = self.document.tuning.len();
-        if direction > 0 {
-            if col >= self.document.columns.len() {
-                return col + DEFAULT_BOX_LEN;
-            }
-            if self.document.columns[col].is_barline(num_strings) {
-                col + 1
-            } else {
-                let (_, box_end) = self.document.box_range(col);
-                box_end
-            }
-        } else {
-            if col == 0 { return 0; }
-            if col >= self.document.columns.len() {
-                return self.document.columns.len().saturating_sub(1);
-            }
-            if self.document.columns[col].is_barline(num_strings) {
-                let prev_col = col - 1;
-                if self.document.columns[prev_col].is_barline(num_strings) {
-                    prev_col
-                } else {
-                    let (box_start, _) = self.document.box_range(prev_col);
-                    box_start
-                }
-            } else {
-                let (box_start, _) = self.document.box_range(col);
-                if box_start == self.document.measure_start_col(col) {
-                    if box_start > 0 {
-                        box_start - 1
-                    } else {
-                        0
-                    }
-                } else {
-                    let (prev_box_start, _) = self.document.box_range(box_start - 1);
-                    prev_box_start
-                }
-            }
-        }
-    }
+
 
     pub fn move_cursor(&mut self, dx: isize, dy: isize) {
-        let new_string = (self.cursor.string as isize + dy).clamp(0, self.document.tuning.len().saturating_sub(1) as isize) as usize;
-        
-        let mut new_col = self.cursor.col;
-        if dx != 0 {
-            let direction = dx.signum();
-            let steps = dx.abs();
-            for _ in 0..steps {
-                new_col = self.next_box_col(new_col, direction);
-            }
-        }
-
-        // Ensure the document expands if we move past the end
-        while new_col >= self.document.columns.len() {
-            self.document.append_measure();
-        }
-
-        self.cursor.col = new_col;
-        self.cursor.string = new_string;
-    }
-
-    pub fn move_cursor_cols(&mut self, dx: isize, dy: isize) {
         let new_string = (self.cursor.string as isize + dy).clamp(0, self.document.tuning.len().saturating_sub(1) as isize) as usize;
         
         let mut new_col = self.cursor.col;
@@ -231,13 +171,9 @@ impl Editor {
         self.save_state();
         let (box_start, _) = self.document.box_range(self.cursor.col);
         
-        let mut first = TabColumn::new();
-        first.is_box_start = true;
-        self.document.columns.insert(box_start, first);
-        
-        for _ in 1..2 { // default box size 2
-            self.document.columns.insert(box_start + 1, TabColumn::new());
-        }
+        let mut col = TabColumn::new();
+        col.is_box_start = true;
+        self.document.columns.insert(box_start, col);
         self.cursor.col = box_start;
     }
 
@@ -308,6 +244,52 @@ impl Editor {
         if self.cursor.col >= box_end - 1 {
             self.cursor.col = box_end - 2;
         }
+    }
+
+    pub fn insert_char_in_box(&mut self, c: char) -> Result<(), &'static str> {
+        let col = self.cursor.col;
+        let num_strings = self.document.tuning.len();
+        if col < self.document.columns.len() && self.document.columns[col].is_barline(num_strings) {
+            return Err("Cannot insert inside a barline");
+        }
+        
+        self.save_state();
+        
+        if col >= self.document.columns.len() {
+            self.document.append_measure();
+        }
+        
+        let was_start = self.document.columns[col].is_box_start;
+        self.document.columns[col].is_box_start = false;
+        
+        let mut new_col = TabColumn::new();
+        new_col.is_box_start = was_start;
+        new_col.set_char(self.cursor.string, c);
+        
+        self.document.columns.insert(col, new_col);
+        self.cursor.col += 1;
+        Ok(())
+    }
+
+    pub fn delete_char_before_cursor(&mut self) {
+        if self.cursor.col == 0 { return; }
+        let prev_col = self.cursor.col - 1;
+        let num_strings = self.document.tuning.len();
+        if self.document.columns[prev_col].is_barline(num_strings) {
+            return; // Don't delete barlines with backspace
+        }
+        
+        self.save_state();
+        let was_start = self.document.columns[prev_col].is_box_start;
+        self.document.columns.remove(prev_col);
+        
+        if was_start && prev_col < self.document.columns.len() {
+            if !self.document.columns[prev_col].is_barline(num_strings) {
+                self.document.columns[prev_col].is_box_start = true;
+            }
+        }
+        
+        self.cursor.col = prev_col;
     }
 
     pub fn replace_chars(&mut self, chars: &[char]) {
@@ -446,50 +428,42 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         assert_eq!(ed.document.columns.len(), 69); // 4 measures * 16 cols + 5 barlines = 69
         ed.insert_box();
-        assert_eq!(ed.document.columns.len(), 71);
+        assert_eq!(ed.document.columns.len(), 70);
         ed.undo();
         assert_eq!(ed.document.columns.len(), 69);
         ed.redo();
-        assert_eq!(ed.document.columns.len(), 71);
+        assert_eq!(ed.document.columns.len(), 70);
 
         ed.delete_box();
         assert_eq!(ed.document.columns.len(), 69);
     }
 
     #[test]
-    fn test_editor_box_navigation() {
+    fn test_editor_navigation() {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         
-        // Move right: should go to col 2 (start of Box 1)
+        // Move right: should go to col 1
+        ed.move_cursor(1, 0);
+        assert_eq!(ed.cursor.col, 1);
+        
+        // Move right again: should go to col 2
         ed.move_cursor(1, 0);
         assert_eq!(ed.cursor.col, 2);
         
-        // Move right again: should go to col 4 (start of Box 2)
-        ed.move_cursor(1, 0);
-        assert_eq!(ed.cursor.col, 4);
-        
-        // Move left: should go to col 2
+        // Move left: should go to col 1
         ed.move_cursor(-1, 0);
-        assert_eq!(ed.cursor.col, 2);
+        assert_eq!(ed.cursor.col, 1);
 
-        // Move to end of measure 1 (col 14 is Box 7 start)
-        ed.cursor.col = 14;
-        // Move right: should go to col 16 (barline)
-        ed.move_cursor(1, 0);
-        assert_eq!(ed.cursor.col, 16);
-        
-        // Move right again: should go to col 17 (start of Measure 2 Box 0)
+        // Move to end of measure 1 (col 15)
+        ed.cursor.col = 15;
+        // Move right: should go to col 17 (barline at 16)
         ed.move_cursor(1, 0);
         assert_eq!(ed.cursor.col, 17);
-
-        // Move left from 17: should go to 16 (barline)
+        
+        // Move left from 17: should go to 15 (barline at 16)
         ed.move_cursor(-1, 0);
-        assert_eq!(ed.cursor.col, 16);
-
-        // Move left from 16: should go to 14 (start of Box 7 in Measure 1)
-        ed.move_cursor(-1, 0);
-        assert_eq!(ed.cursor.col, 14);
+        assert_eq!(ed.cursor.col, 15);
     }
 
     #[test]
@@ -573,28 +547,9 @@ mod tests {
         
         ed.clear_box();
         assert_eq!(ed.document.columns[0].get_char(0), '-');
-        assert_eq!(ed.document.columns[1].get_char(0), '-');
-        assert_eq!(ed.document.columns[2].get_char(0), '9'); // Col 2 is not cleared (Box 1)
+        assert_eq!(ed.document.columns[1].get_char(0), '9'); // Col 1 is not cleared (Box 1)
+        assert_eq!(ed.document.columns[2].get_char(0), '9'); // Col 2 is not cleared (Box 2)
         assert_eq!(ed.document.columns.len(), 69);
-    }
-
-    #[test]
-    fn test_editor_move_cursor_cols() {
-        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
-        ed.cursor.col = 0;
-        
-        ed.move_cursor_cols(1, 0);
-        assert_eq!(ed.cursor.col, 1);
-        
-        ed.move_cursor_cols(2, 0);
-        assert_eq!(ed.cursor.col, 3);
-        
-        ed.cursor.col = 15;
-        ed.move_cursor_cols(1, 0);
-        assert_eq!(ed.cursor.col, 17);
-        
-        ed.move_cursor_cols(-1, 0);
-        assert_eq!(ed.cursor.col, 15);
     }
 
     #[test]
@@ -602,25 +557,62 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         
+        // Default size is 1
         let (s, e) = ed.document.box_range(0);
-        assert_eq!(e - s, 2);
+        assert_eq!(e - s, 1);
         
         ed.expand_active_box();
         let (s, e) = ed.document.box_range(0);
-        assert_eq!(e - s, 3);
+        assert_eq!(e - s, 2);
         assert_eq!(ed.document.columns.len(), 70);
         
         ed.shrink_active_box();
         let (s, e) = ed.document.box_range(0);
-        assert_eq!(e - s, 2);
+        assert_eq!(e - s, 1);
         assert_eq!(ed.document.columns.len(), 69);
         
         ed.shrink_active_box();
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 1);
+    }
+
+    #[test]
+    fn test_editor_insert_char() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
         
-        ed.shrink_active_box();
+        // Insert '1' at col 0 (default size 1)
+        ed.insert_char_in_box('1').unwrap();
+        // Columns: [1 (start=true)] [empty (start=false)] ...
+        // Cursor should move to 1.
+        assert_eq!(ed.cursor.col, 1);
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[0].is_box_start, true);
+        assert_eq!(ed.document.columns[1].get_char(0), '-');
+        assert_eq!(ed.document.columns[1].is_box_start, false);
+        
         let (s, e) = ed.document.box_range(0);
-        assert_eq!(e - s, 1);
+        assert_eq!(e - s, 2); // Box 0 is now size 2 (cols 0, 1)
+        
+        // Insert '2' at col 1
+        ed.insert_char_in_box('2').unwrap();
+        // Columns: [1 (start=true)] [2 (start=false)] [empty (start=false)] ...
+        // Cursor should move to 2.
+        assert_eq!(ed.cursor.col, 2);
+        assert_eq!(ed.document.columns[1].get_char(0), '2');
+        assert_eq!(ed.document.columns[2].get_char(0), '-');
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 3); // Box 0 is now size 3 (cols 0, 1, 2)
+        
+        // Delete char before cursor (at col 2, so deletes col 1 ('2'))
+        ed.delete_char_before_cursor();
+        assert_eq!(ed.cursor.col, 1);
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[1].get_char(0), '-'); // '2' is gone
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 2); // Box 0 is now size 2
     }
 }

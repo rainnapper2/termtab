@@ -46,6 +46,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     // Status bar
     let mode_str = match &app.mode {
         Mode::Normal => "NORMAL".to_string(),
+        Mode::Insert => "INSERT".to_string(),
         Mode::Replace { buffer } => format!("REPLACE [{}]", buffer),
         Mode::ContinuousReplace => "C-REPLACE".to_string(),
         Mode::Prompt { buffer } => format!("PROMPT [{}]", buffer),
@@ -386,6 +387,6 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
 fn get_target_cursor_col(app: &App, active_box_start: usize) -> usize {
     match &app.mode {
         Mode::Replace { buffer } => active_box_start + buffer.len(),
-        _ => active_box_start,
+        _ => app.editor.cursor.col,
     }
 }

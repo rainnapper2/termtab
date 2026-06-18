@@ -13,6 +13,7 @@ fn is_valid_continuous_replace_char(c: char) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mode {
     Normal,
+    Insert,
     Replace { buffer: String },
     ContinuousReplace,
     Prompt { buffer: String },
@@ -98,6 +99,9 @@ impl App {
                     self.error_msg = None; // Clear error on next keypress
                     match &mut self.mode {
                         Mode::Normal => self.handle_normal(key),
+                        Mode::Insert => {
+                            self.handle_insert(key);
+                        }
                         Mode::Replace { buffer } => {
                             let buf = buffer.clone();
                             self.handle_replace(key, buf);
@@ -169,6 +173,10 @@ impl App {
             KeyCode::Char(':') => {
                 self.count_buffer.clear();
                 self.mode = Mode::Command { buffer: String::new() };
+            }
+            KeyCode::Char('i') => {
+                self.count_buffer.clear();
+                self.mode = Mode::Insert;
             }
             KeyCode::Char('r') => {
                 self.count_buffer.clear();
@@ -292,23 +300,22 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
-                self.editor.move_cursor(1, 0);
+                let (_, box_end) = self.editor.document.box_range(self.editor.cursor.col);
+                self.editor.cursor.col = box_end;
                 let tuning_len = self.editor.document.tuning.len();
                 while self.editor.cursor.col < self.editor.document.columns.len() 
                     && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
                 {
-                    self.editor.move_cursor(1, 0);
+                    self.editor.cursor.col += 1;
                 }
             }
             KeyCode::Backspace => {
                 let tuning_len = self.editor.document.tuning.len();
                 
-                // Move left by 1 column
                 if self.editor.cursor.col > 0 {
-                    self.editor.move_cursor_cols(-1, 0);
+                    self.editor.move_cursor(-1, 0);
                 }
                 
-                // Reset the char to a dash if it's not a barline
                 if !self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
                     self.editor.replace_chars(&['-']);
                 }
@@ -325,11 +332,11 @@ impl App {
                         self.error_msg = Some(e.to_string());
                         return;
                     }
-                    self.editor.move_cursor_cols(1, 0);
+                    self.editor.move_cursor(1, 0);
                 } else {
                     let insert_c = if c == ' ' { '-' } else { c };
                     self.editor.replace_chars(&[insert_c]);
-                    self.editor.move_cursor_cols(1, 0);
+                    self.editor.move_cursor(1, 0);
                 }
             }
             _ => {}
@@ -468,6 +475,30 @@ impl App {
             KeyCode::Char(c) => {
                 buffer.push(c);
                 self.mode = Mode::Command { buffer };
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_insert(&mut self, key: event::KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Backspace => {
+                self.editor.delete_char_before_cursor();
+            }
+            KeyCode::Char(c) => {
+                if !is_valid_replace_char(c) {
+                    self.error_msg = Some(format!("Invalid character: '{}'", c));
+                    return;
+                }
+                if let Err(e) = self.editor.insert_char_in_box(c) {
+                    self.error_msg = Some(e.to_string());
+                }
             }
             _ => {}
         }

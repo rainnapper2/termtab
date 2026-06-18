@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 
 pub const DEFAULT_MEASURE_LEN: usize = 16;
-pub const DEFAULT_BOX_LEN: usize = 2;
+pub const DEFAULT_BOX_LEN: usize = 1;
 
 use std::collections::BTreeMap;
 use serde::{Deserializer};
@@ -388,15 +388,15 @@ mod tests {
     #[test]
     fn test_box_range() {
         let doc = TabDocument::default();
-        assert_eq!(doc.box_range(0), (0, 2));
-        assert_eq!(doc.box_range(1), (0, 2));
-        assert_eq!(doc.box_range(2), (2, 4));
-        assert_eq!(doc.box_range(3), (2, 4));
-        assert_eq!(doc.box_range(14), (14, 16));
-        assert_eq!(doc.box_range(15), (14, 16));
+        assert_eq!(doc.box_range(0), (0, 1));
+        assert_eq!(doc.box_range(1), (1, 2));
+        assert_eq!(doc.box_range(2), (2, 3));
+        assert_eq!(doc.box_range(3), (3, 4));
+        assert_eq!(doc.box_range(14), (14, 15));
+        assert_eq!(doc.box_range(15), (15, 16));
         assert_eq!(doc.box_range(16), (16, 17)); // barline
-        assert_eq!(doc.box_range(17), (17, 19)); // M2 start
-        assert_eq!(doc.box_range(32), (31, 33)); // M2 end
+        assert_eq!(doc.box_range(17), (17, 18)); // M2 start
+        assert_eq!(doc.box_range(32), (32, 33)); // M2 end
         assert_eq!(doc.box_range(33), (33, 34)); // barline
     }
 
@@ -415,8 +415,8 @@ mod tests {
     #[test]
     fn test_dump_to_string() {
         let doc = TabDocument::default();
-        let dump = doc.dump_to_string(100);
-        assert!(dump.contains("e|-----------------------|-----------------------|-----------------------|-----------------------||"));
-        assert!(dump.contains("B|-----------------------|-----------------------|-----------------------|-----------------------||"));
+        let dump = doc.dump_to_string(200);
+        assert!(dump.contains("e|-------------------------------|-------------------------------|-------------------------------|-------------------------------||"));
+        assert!(dump.contains("B|-------------------------------|-------------------------------|-------------------------------|-------------------------------||"));
     }
 }
