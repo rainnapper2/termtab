@@ -336,13 +336,10 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
-                let (_, box_end) = self.editor.document.box_range(self.editor.cursor.col);
-                self.editor.jump_to_col(box_end);
-                let tuning_len = self.editor.document.tuning.len();
-                while self.editor.cursor.col < self.editor.document.columns.len() 
-                    && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
-                {
-                    self.editor.cursor.col += 1;
+                if !self.editor.move_box_right() {
+                    // At the end of the document, append a measure
+                    self.editor.document.append_measure();
+                    self.editor.move_box_right();
                 }
             }
             KeyCode::Backspace => {
@@ -776,5 +773,46 @@ mod tests {
         assert_eq!(app.editor.document.columns.len(), old_len + 9);
         assert_eq!(app.editor.cursor.col, old_len);
         assert_eq!(app.mode, Mode::Insert);
+    }
+
+    #[test]
+    fn test_app_continuous_replace_enter() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.col = 0;
+        app.mode = Mode::ContinuousReplace;
+        
+        app.editor.expand_active_box();
+        app.editor.expand_active_box();
+        app.editor.replace_chars(&['1']).unwrap();
+        
+        app.editor.cursor.col = 2;
+        let initial_len = app.editor.document.columns.len();
+        
+        app.handle_continuous_replace(press_key(KeyCode::Enter));
+        
+        assert_eq!(app.editor.document.columns.len(), initial_len - 2);
+        assert_eq!(app.mode, Mode::ContinuousReplace);
+        assert_eq!(app.editor.cursor.col, 1);
+        
+        let mut last_box_start = app.editor.document.columns.len() - 1;
+        let tuning_len = app.editor.document.tuning.len();
+        while last_box_start > 0 {
+            if !app.editor.document.columns[last_box_start].is_barline(tuning_len) 
+               && app.editor.document.columns[last_box_start].is_box_start {
+                break;
+            }
+            last_box_start -= 1;
+        }
+        
+        app.editor.cursor.col = last_box_start;
+        let old_len = app.editor.document.columns.len();
+        
+        app.handle_continuous_replace(press_key(KeyCode::Enter));
+        
+        assert_eq!(app.editor.document.columns.len(), old_len + 9);
+        assert_eq!(app.editor.cursor.col, old_len);
+        assert_eq!(app.mode, Mode::ContinuousReplace);
     }
 }
