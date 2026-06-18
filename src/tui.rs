@@ -278,6 +278,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                     global_col >= active_box_range.0 && global_col < active_box_range.1;
 
                 let mut c = chunk[i].get_char(string_idx);
+
                 let mut is_preview = false;
                 
                 if let Mode::Replace { buffer } = &app.mode {
@@ -302,7 +303,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                 if app.note_mode && c.is_ascii_digit() && !is_preview {
                     let mut fret_str = c.to_string();
                     let mut consumed_next = false;
-                    if i + 1 < chunk.len() && chunk[i+1].get_char(string_idx).is_ascii_digit() {
+                    if i + 1 < chunk.len() && !chunk[i+1].is_box_start && chunk[i+1].get_char(string_idx).is_ascii_digit() {
                         fret_str.push(chunk[i+1].get_char(string_idx));
                         consumed_next = true;
                     }
@@ -422,5 +423,38 @@ mod tests {
         
         let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(e_line_str, "e|E-/E---------------|---------------|---------------|---------------||");
+    }
+
+    #[test]
+    fn test_render_note_mode_no_cross_box_combination() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        app.note_mode = true;
+        
+        // Use D string (index 3)
+        app.editor.cursor.string = 3;
+        
+        // Box 0: 0..2 (size 2), content "12"
+        app.editor.cursor.col = 0;
+        app.editor.expand_active_box();
+        app.editor.replace_chars(&['1', '2']).unwrap();
+        
+        // Box 1: 2..3 (size 1), content "2"
+        app.editor.cursor.col = 2;
+        app.editor.replace_chars(&['2']).unwrap();
+        
+        // Box 2: 3..4 (size 1), content "2"
+        app.editor.cursor.col = 3;
+        app.editor.replace_chars(&['2']).unwrap();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let d_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("D|")
+        }).unwrap();
+        
+        let d_line_str: String = d_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(d_line_str.starts_with("D|D--E-E-"));
     }
 }
