@@ -46,7 +46,8 @@ pub fn draw(f: &mut Frame, app: &App) {
     // Status bar
     let mode_str = match &app.mode {
         Mode::Normal => "NORMAL".to_string(),
-        Mode::Replace { buffer } => format!("REPLACE [{}]", buffer),
+        Mode::Insert => "INSERT".to_string(),
+        Mode::Replace => "REPLACE".to_string(),
         Mode::ContinuousReplace => "C-REPLACE".to_string(),
         Mode::Prompt { buffer } => format!("PROMPT [{}]", buffer),
         Mode::Visual { start_col } => format!("VISUAL [start: {}]", start_col),
@@ -101,7 +102,10 @@ pub fn draw(f: &mut Frame, app: &App) {
             Line::from("  r            Enter Replace mode (type digits or h,p,s,x,b,r,~,t,/,-)"),
             Line::from("  v            Enter Visual mode (select columns)"),
             Line::from("  y, d, p      Yank (copy), delete (cut), paste selected columns"),
-            Line::from("  >, <         Insert or delete column at cursor"),
+            Line::from("  >, <         Insert or delete active box"),
+            Line::from("  +, -         Expand or shrink active box (variable length)"),
+            Line::from("  x            Delete character at cursor"),
+            Line::from("  d            Clear active box content"),
             Line::from("  A            Add text annotation (e.g., Key: C Major)"),
             Line::from("  n            Toggle diatonic note translation (fret numbers -> notes)"),
             Line::from("  u, Ctrl+R    Undo, Redo"),
@@ -198,9 +202,28 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
             }
         };
 
+        let get_visual_offset = |col_idx_in_chunk: usize| -> usize {
+            let mut offset = 2; // "e|"
+            for j in 0..col_idx_in_chunk {
+                offset += 1;
+                let g_col = current_col + j;
+                let (_, box_end) = app.editor.document.box_range(g_col);
+                if !app.editor.document.columns[g_col].is_barline(app.editor.document.tuning.len())
+                    && g_col + 1 == box_end 
+                    && j + 1 < chunk.len() 
+                {
+                    let next_g_col = g_col + 1;
+                    if !app.editor.document.columns[next_g_col].is_barline(app.editor.document.tuning.len()) {
+                        offset += 1;
+                    }
+                }
+            }
+            offset
+        };
+
         for (i, col) in chunk.iter().enumerate() {
             let global_col = current_col + i;
-            let offset_i = i + 2; // Offset by 2 to align past the "e|" tuning prefix
+            let offset_i = get_visual_offset(i);
 
             if app.editor.document.is_measure_start(global_col) {
                 let text = format!("[{}]", app.editor.document.measure_number_at_col(global_col));
@@ -232,68 +255,99 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
             let tuning_char = app.editor.document.tuning[string_idx];
             string_chars.push(Span::styled(format!("{}|", tuning_char), Style::default().fg(Color::DarkGray)));
 
+            let mut visual_col_offset = 2; // Start after "e|"
+            let active_box_range = app.editor.document.box_range(app.editor.cursor.col);
+            let is_active_string = app.editor.cursor.string == string_idx;
+            
             let mut i = 0;
             while i < chunk.len() {
                 let global_col = current_col + i;
-                let c = chunk[i].get_char(string_idx);
                 
                 let mut is_selected = false;
+                let mut visual_range = None;
                 if let Mode::Visual { start_col } = app.mode {
-                    let min_c = start_col.min(app.editor.cursor.col);
-                    let max_c = start_col.max(app.editor.cursor.col);
-                    if global_col >= min_c && global_col <= max_c {
+                    let (s, e) = app.get_visual_range(start_col);
+                    visual_range = Some((s, e));
+                    if global_col >= s && global_col <= e {
                         is_selected = true;
                     }
                 }
 
+                let is_in_active_box = is_active_string && 
+                    !app.editor.document.columns[global_col].is_barline(app.editor.document.tuning.len()) &&
+                    global_col >= active_box_range.0 && global_col < active_box_range.1;
+
+                let c = chunk[i].get_char(string_idx);
+                
+
+
                 let style = if is_selected {
                     Style::default().bg(Color::White).fg(Color::Black)
+                } else if is_in_active_box && !matches!(app.mode, Mode::Visual {..}) {
+                    Style::default().bg(Color::Rgb(50, 50, 100)).fg(Color::White)
                 } else {
                     Style::default()
                 };
 
                 if app.note_mode && c.is_ascii_digit() {
-                    // Try to parse fret
-                    let mut fret_str = c.to_string();
-                    let mut consumed_next = false;
-                    if i + 1 < chunk.len() && chunk[i+1].get_char(string_idx).is_ascii_digit() {
-                        fret_str.push(chunk[i+1].get_char(string_idx));
-                        consumed_next = true;
-                    }
+                    let (box_start, box_end) = app.editor.document.box_range(global_col);
+                    let is_group_start = global_col == box_start || 
+                        !app.editor.document.columns[global_col - 1].get_char(string_idx).is_ascii_digit();
                     
-                    if let Ok(fret) = fret_str.parse::<u32>() {
-                        let note = fret_to_note(tuning_char, fret, column_keys[global_col].as_deref());
-                        let note_chars: Vec<char> = note.chars().collect();
-                        
-                        string_chars.push(Span::styled(note_chars[0].to_string(), style));
-                        if note_chars.len() > 1 {
-                            // If the note has a sharp/flat, we draw it in the next column
-                            if consumed_next {
-                                // The next column was part of the number, so overwrite it
-                                string_chars.push(Span::styled(note_chars[1].to_string(), style));
-                                i += 1; // skip next column as we consumed it
-                            } else {
-                                // The next column was likely a dash. We just override it visually!
-                                if i + 1 < chunk.len() {
-                                    string_chars.push(Span::styled(note_chars[1].to_string(), style));
-                                    i += 1;
-                                }
-                            }
-                        } else if consumed_next {
-                            // Fret was 2 digits (e.g. 10), but note is 1 char (e.g. D). We need to fill the second column with a dash
-                            string_chars.push(Span::styled("-".to_string(), style));
-                            i += 1;
+                    if is_group_start {
+                        let mut group_end = global_col + 1;
+                        while group_end < box_end && app.editor.document.columns[group_end].get_char(string_idx).is_ascii_digit() {
+                            group_end += 1;
+                        }
+                        let mut fret_str = String::new();
+                        for col_idx in global_col..group_end {
+                            fret_str.push(app.editor.document.columns[col_idx].get_char(string_idx));
+                        }
+                        if let Ok(fret) = fret_str.parse::<u32>() {
+                            let note = fret_to_note(tuning_char, fret, column_keys[global_col].as_deref());
+                            let first_char = note.chars().next().unwrap_or('-');
+                            string_chars.push(Span::styled(first_char.to_string(), style));
+                        } else {
+                            string_chars.push(Span::styled(c.to_string(), style));
                         }
                     } else {
-                        string_chars.push(Span::styled(c.to_string(), style));
+                        string_chars.push(Span::styled("-".to_string(), style));
                     }
+                    if is_active_string && global_col == app.editor.cursor.col {
+                        cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
+                    }
+                    visual_col_offset += 1;
                 } else {
                     string_chars.push(Span::styled(c.to_string(), style));
+                    if is_active_string && global_col == app.editor.cursor.col {
+                        cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
+                    }
+                    visual_col_offset += 1;
                 }
 
-                // Check cursor
-                if global_col == app.editor.cursor.col && string_idx == app.editor.cursor.string {
-                    cursor_visual_pos = Some((i + 2, start_y + string_idx)); // +2 for "E|"
+                let eval_col = current_col + i;
+                let (_, box_end) = app.editor.document.box_range(eval_col);
+                if !app.editor.document.columns[eval_col].is_barline(app.editor.document.tuning.len())
+                    && eval_col + 1 == box_end 
+                    && i + 1 < chunk.len() 
+                {
+                    let next_global_col = eval_col + 1;
+                    if !app.editor.document.columns[next_global_col].is_barline(app.editor.document.tuning.len()) {
+                        let sep_selected = if let Some((s, e)) = visual_range {
+                            eval_col >= s && next_global_col <= e
+                        } else {
+                            false
+                        };
+                        
+                        let sep_style = if sep_selected {
+                            Style::default().bg(Color::White).fg(Color::Black)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        
+                        string_chars.push(Span::styled("-", sep_style));
+                        visual_col_offset += 1;
+                    }
                 }
 
                 i += 1;
@@ -307,4 +361,238 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
     }
 
     (Text::from(lines), cursor_visual_pos)
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::Editor;
+
+    #[test]
+    fn test_render_note_mode_alignment() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        app.note_mode = true;
+        
+        app.editor.insert_char_in_box('1').unwrap();
+        app.editor.insert_char_in_box('2').unwrap();
+        app.editor.insert_char_in_box('/').unwrap();
+        app.editor.insert_char_in_box('1').unwrap();
+        app.editor.insert_char_in_box('2').unwrap();
+        
+        app.editor.adjust_box_to_fit(0);
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("e|")
+        }).unwrap();
+        
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(e_line_str, "e|E-/E---------------|---------------|---------------|---------------||");
+    }
+
+    #[test]
+    fn test_render_note_mode_no_cross_box_combination() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        app.note_mode = true;
+        
+        // Use D string (index 3)
+        app.editor.cursor.string = 3;
+        
+        // Box 0: 0..2 (size 2), content "12"
+        app.editor.cursor.col = 0;
+        app.editor.expand_active_box();
+        app.editor.replace_chars(&['1', '2']).unwrap();
+        
+        // Box 1: 2..3 (size 1), content "2"
+        app.editor.cursor.col = 2;
+        app.editor.replace_chars(&['2']).unwrap();
+        
+        // Box 2: 3..4 (size 1), content "2"
+        app.editor.cursor.col = 3;
+        app.editor.replace_chars(&['2']).unwrap();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let d_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("D|")
+        }).unwrap();
+        
+        let d_line_str: String = d_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(d_line_str.starts_with("D|D--E-E-"));
+    }
+
+    #[test]
+    fn test_render_note_mode_slides() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.string = 1;
+        app.editor.cursor.col = 0;
+        
+        app.editor.expand_active_box(); // size 2
+        app.editor.expand_active_box(); // size 3
+        app.editor.expand_active_box(); // size 4
+        app.editor.expand_active_box(); // size 5
+        app.editor.expand_active_box(); // size 6
+        app.editor.expand_active_box(); // size 7
+        
+        app.editor.replace_chars(&['2', '/', '2', '/', '2', '/', '2']).unwrap();
+        app.editor.adjust_box_to_fit(0);
+        
+        app.note_mode = true;
+        app.editor.transform_to_note_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let b_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("B|")
+        }).unwrap();
+        
+        let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(b_line_str.starts_with("B|C#/C#/C#/C#"), "Actual: {}", b_line_str);
+        
+        app.note_mode = false;
+        app.editor.transform_to_fret_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        let b_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("B|")
+        }).unwrap();
+        let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(b_line_str.starts_with("B|2/2/2/2"), "Actual after toggle off: {}", b_line_str);
+    }
+
+    #[test]
+    fn test_render_note_mode_non_aligned_groups() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.col = 0;
+        app.editor.expand_active_box(); // size 2
+        app.editor.expand_active_box(); // size 3
+        app.editor.expand_active_box(); // size 4
+        app.editor.expand_active_box(); // size 5
+        app.editor.expand_active_box(); // size 6
+        app.editor.expand_active_box(); // size 7
+        app.editor.expand_active_box(); // size 8
+        
+        app.editor.cursor.string = 0; // e string
+        app.editor.replace_chars(&['-', '1', '2']).unwrap();
+        
+        app.editor.cursor.string = 1; // B string
+        app.editor.replace_chars(&['2', '/', '2', '/', '2', '/', '2']).unwrap();
+        
+        app.editor.cursor.string = 3; // D string
+        app.editor.replace_chars(&['1', '/', '1', '/', '1', '/', '1']).unwrap();
+        
+        app.editor.cursor.string = 4; // A string
+        app.editor.replace_chars(&['3', '/', '3', '/', '3', '/', '3']).unwrap();
+        
+        app.editor.adjust_box_to_fit(0);
+        
+        app.note_mode = true;
+        app.editor.transform_to_note_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("e|")
+        }).unwrap();
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let b_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("B|")
+        }).unwrap();
+        let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let d_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("D|")
+        }).unwrap();
+        let d_line_str: String = d_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let a_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("A|")
+        }).unwrap();
+        let a_line_str: String = a_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        assert!(b_line_str.starts_with("B|C#/C#/C#/C#"), "Actual B: {}", b_line_str);
+        assert!(d_line_str.starts_with("D|D#/D#/D#/D#"), "Actual D: {}", d_line_str);
+        assert!(e_line_str.starts_with("e|--E--"), "Actual e: {}", e_line_str);
+        assert!(a_line_str.starts_with("A|C-/C-/C-/C-"), "Actual A: {}", a_line_str);
+    }
+
+    #[test]
+    fn test_render_note_mode_overlapping_slides() {
+        let ed = Editor::new(vec!['E', 'A', 'D', 'G']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.col = 0;
+        app.editor.expand_active_box(); // size 2
+        app.editor.expand_active_box(); // size 3
+        app.editor.expand_active_box(); // size 4
+        app.editor.expand_active_box(); // size 5
+        app.editor.expand_active_box(); // size 6
+        app.editor.expand_active_box(); // size 7
+        
+        app.editor.cursor.string = 0; // E string
+        app.editor.replace_chars(&['1', '2', '/', '1', '2', '/', '1']).unwrap();
+        
+        app.editor.cursor.string = 1; // A string
+        app.editor.replace_chars(&['1', '/', '2', '/', '1']).unwrap();
+        
+        app.editor.adjust_box_to_fit(0);
+        
+        app.note_mode = true;
+        app.editor.transform_to_note_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("E|")
+        }).unwrap();
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let a_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("A|")
+        }).unwrap();
+        let a_line_str: String = a_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        assert!(e_line_str.starts_with("E|E--/E--/F"), "Actual E: {}", e_line_str);
+        assert!(a_line_str.starts_with("A|A#/B/A#"), "Actual A: {}", a_line_str);
+        
+        app.note_mode = false;
+        app.editor.transform_to_fret_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("E|")
+        }).unwrap();
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let a_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("A|")
+        }).unwrap();
+        let a_line_str: String = a_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        assert!(e_line_str.starts_with("E|12/12/1"), "Actual E after off: {}", e_line_str);
+        assert!(a_line_str.starts_with("A|1/2/1"), "Actual A after off: {}", a_line_str);
+    }
 }
