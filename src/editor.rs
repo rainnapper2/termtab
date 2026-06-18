@@ -167,6 +167,69 @@ impl Editor {
         }
     }
 
+    pub fn move_box_left(&mut self) {
+        let col = self.cursor.col;
+        let num_strings = self.document.tuning.len();
+        if col >= self.document.columns.len() { return; }
+        if self.document.columns[col].is_barline(num_strings) {
+            let mut prev_col = col;
+            while prev_col > 0 {
+                prev_col -= 1;
+                if !self.document.columns[prev_col].is_barline(num_strings) {
+                    let (start, _) = self.document.box_range(prev_col);
+                    self.jump_to_col(start);
+                    return;
+                }
+            }
+            return;
+        }
+        
+        let (box_start, _) = self.document.box_range(col);
+        if col == box_start {
+            let mut prev_col = box_start;
+            while prev_col > 0 {
+                prev_col -= 1;
+                if !self.document.columns[prev_col].is_barline(num_strings) {
+                    let (start, _) = self.document.box_range(prev_col);
+                    self.jump_to_col(start);
+                    return;
+                }
+            }
+        } else {
+            self.jump_to_col(box_start);
+        }
+    }
+
+    pub fn move_box_right(&mut self) {
+        let col = self.cursor.col;
+        let num_strings = self.document.tuning.len();
+        if col >= self.document.columns.len() { return; }
+        
+        if self.document.columns[col].is_barline(num_strings) {
+            let mut next_col = col;
+            while next_col < self.document.columns.len() - 1 {
+                next_col += 1;
+                if !self.document.columns[next_col].is_barline(num_strings) {
+                    let (start, _) = self.document.box_range(next_col);
+                    self.jump_to_col(start);
+                    return;
+                }
+            }
+            return;
+        }
+        
+        let (_, box_end) = self.document.box_range(col);
+        let mut next_col = box_end;
+        while next_col < self.document.columns.len() {
+            if !self.document.columns[next_col].is_barline(num_strings) {
+                let (start, _) = self.document.box_range(next_col);
+                self.jump_to_col(start);
+                return;
+            }
+            next_col += 1;
+        }
+    }
+
     fn check_adjacency_after_replace(&self, col: usize, string: usize, chars: &[char]) -> bool {
         let mut doc_clone = self.document.clone();
         for (i, &c) in chars.iter().enumerate() {
@@ -1029,5 +1092,51 @@ mod tests {
         assert_eq!(ed.document.columns[2].get_char(0), '/');
         assert_eq!(ed.document.columns[3].get_char(0), '1');
         assert_eq!(ed.document.columns[4].get_char(0), '2');
+    }
+
+    #[test]
+    fn test_editor_box_navigation() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        
+        ed.cursor.col = 0;
+        ed.expand_active_box();
+        ed.expand_active_box();
+        
+        ed.cursor.col = 0;
+        ed.move_box_right();
+        assert_eq!(ed.cursor.col, 1);
+        
+        ed.move_box_right();
+        assert_eq!(ed.cursor.col, 2);
+        
+        ed.move_box_left();
+        assert_eq!(ed.cursor.col, 1);
+        
+        ed.move_box_left();
+        assert_eq!(ed.cursor.col, 0);
+        
+        ed.expand_active_box();
+        ed.cursor.col = 1;
+        ed.move_box_left();
+        assert_eq!(ed.cursor.col, 0);
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 2);
+        
+        let tuning_len = ed.document.tuning.len();
+        let mut bar_col = 0;
+        for (i, col) in ed.document.columns.iter().enumerate() {
+            if col.is_barline(tuning_len) {
+                bar_col = i;
+                break;
+            }
+        }
+        assert_eq!(bar_col, 9);
+        
+        ed.cursor.col = bar_col - 1;
+        ed.move_box_right();
+        assert_eq!(ed.cursor.col, bar_col + 1);
+        
+        ed.move_box_left();
+        assert_eq!(ed.cursor.col, bar_col - 1);
     }
 }

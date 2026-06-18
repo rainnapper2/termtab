@@ -141,7 +141,7 @@ impl App {
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 self.count_buffer.push(c);
             }
-            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Char('e') | KeyCode::Char('b') | KeyCode::Char('[') | KeyCode::Char(']') => {
+            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Char('e') | KeyCode::Char('b') | KeyCode::Char('[') | KeyCode::Char(']') | KeyCode::Char('H') | KeyCode::Char('L') => {
                 let count = if self.count_buffer.is_empty() {
                     1
                 } else {
@@ -157,6 +157,8 @@ impl App {
                     KeyCode::Char('w') => { for _ in 0..count { self.editor.jump_next_measure(); } }
                     KeyCode::Char('b') => { for _ in 0..count { self.editor.jump_prev_measure(); } }
                     KeyCode::Char('e') => { for _ in 0..count { self.editor.jump_end_measure(); } }
+                    KeyCode::Char('H') => { for _ in 0..count { self.editor.move_box_left(); } }
+                    KeyCode::Char('L') => { for _ in 0..count { self.editor.move_box_right(); } }
                     KeyCode::Char(']') => {
                         let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
                         let wrap_width = if width > 4 { (width - 4) as usize } else { 80 };
@@ -696,5 +698,30 @@ mod tests {
         assert_eq!(app.editor.document.columns[35].get_char(0), '2');
         assert_eq!(app.editor.cursor.col, 38);
         assert_eq!(app.editor.document.columns.len(), 47);
+    }
+
+    #[test]
+    fn test_app_box_navigation() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.col = 0;
+        app.handle_normal(press_key(KeyCode::Char('+')));
+        app.handle_normal(press_key(KeyCode::Char('+')));
+        
+        app.editor.cursor.col = 0;
+        app.handle_normal(press_key(KeyCode::Char('L')));
+        assert_eq!(app.editor.cursor.col, 1);
+        
+        app.handle_normal(press_key(KeyCode::Char('L')));
+        assert_eq!(app.editor.cursor.col, 2);
+        
+        app.handle_normal(press_key(KeyCode::Char('H')));
+        assert_eq!(app.editor.cursor.col, 1);
+        
+        app.editor.cursor.col = 0;
+        app.handle_normal(press_key(KeyCode::Char('2')));
+        app.handle_normal(press_key(KeyCode::Char('L')));
+        assert_eq!(app.editor.cursor.col, 2);
     }
 }
