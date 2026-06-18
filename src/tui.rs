@@ -411,7 +411,7 @@ mod tests {
         app.editor.insert_char_in_box('1').unwrap();
         app.editor.insert_char_in_box('2').unwrap();
         
-        app.editor.shrink_box_to_fit(0);
+        app.editor.adjust_box_to_fit(0);
         
         let (text, _) = render_tab_document(&app, 80);
         

@@ -68,10 +68,12 @@ impl Editor {
                     if note_len > 1 {
                         if consumed_next {
                             width += 1;
-                            i += 1; // Skip next digit (plus default i+=1 at end)
-                        } else if i + 1 < cols.len() {
+                            i += 1;
+                        } else {
                             width += 1;
-                            i += 1; // Skip next char (plus default i+=1 at end)
+                            if i + 1 < cols.len() {
+                                i += 1;
+                            }
                         }
                     } else if consumed_next {
                         width += 1; // For the padding '-'
@@ -79,58 +81,70 @@ impl Editor {
                     }
                 }
             } else {
-                if c != '-' {
-                    width += 1;
-                }
+                width += 1;
             }
             i += 1;
         }
         width
     }
 
-    pub fn shrink_box_to_fit(&mut self, col: usize) -> usize {
+    fn get_target_and_current_box_size(&self, col: usize) -> (usize, usize) {
         let num_strings = self.document.tuning.len();
-        if col >= self.document.columns.len() { return 0; }
+        if col >= self.document.columns.len() { return (0, 0); }
         if self.document.columns[col].is_barline(num_strings) {
-            return 0;
+            return (0, 0);
         }
-        
         let (box_start, box_end) = self.document.box_range(col);
         let mut max_len = 0;
         for string in 0..num_strings {
             let tuning = self.document.tuning[string];
-            // Fret width
             let mut fret_width = 0;
             for (i, c) in (box_start..box_end).enumerate() {
                 if self.document.columns[c].get_char(string) != '-' {
                     fret_width = i + 1;
                 }
             }
-            
-            // Note width
             let note_width = Self::required_note_width_for_string(
-                &self.document.columns[box_start..box_end],
+                &self.document.columns[box_start..box_start + fret_width],
                 string,
                 tuning,
             );
-            
             let required_width = fret_width.max(note_width);
             if required_width > max_len {
                 max_len = required_width;
             }
         }
-        
-        let target_size = max_len.max(1);
-        let current_size = box_end - box_start;
+        (max_len.max(1), box_end - box_start)
+    }
+
+    fn apply_box_adjustment(&mut self, col: usize, target_size: usize, current_size: usize, allow_shrink: bool) -> isize {
+        let (box_start, box_end) = self.document.box_range(col);
         if target_size < current_size {
-            self.save_state();
-            let remove_start = box_start + target_size;
-            self.document.columns.drain(remove_start..box_end);
-            
-            if self.cursor.col >= remove_start && self.cursor.col < box_end {
-                self.cursor.col = remove_start - 1;
+            if allow_shrink {
+                let remove_start = box_start + target_size;
+                self.document.columns.drain(remove_start..box_end);
+                if self.cursor.col >= remove_start && self.cursor.col < box_end {
+                    self.cursor.col = remove_start - 1;
+                }
+                return -( (box_end - remove_start) as isize );
             }
-            return box_end - remove_start;
+        } else if target_size > current_size {
+            let insert_count = target_size - current_size;
+            for _ in 0..insert_count {
+                let mut new_col = TabColumn::new();
+                new_col.is_box_start = false;
+                self.document.columns.insert(box_end, new_col);
+            }
+            return insert_count as isize;
+        }
+        0
+    }
+
+    pub fn adjust_box_to_fit(&mut self, col: usize) -> isize {
+        let (target, current) = self.get_target_and_current_box_size(col);
+        if target != current {
+            self.save_state();
+            return self.apply_box_adjustment(col, target, current, true);
         }
         0
     }
@@ -141,10 +155,10 @@ impl Editor {
             let (old_start, old_end) = self.document.box_range(old_col);
             let (new_start, _) = self.document.box_range(new_col);
             if old_start != new_start {
-                let removed = self.shrink_box_to_fit(old_col);
+                let change = self.adjust_box_to_fit(old_col);
                 let mut adjusted_new_col = new_col;
-                if removed > 0 && new_col >= old_end {
-                    adjusted_new_col -= removed;
+                if change != 0 && new_col >= old_end {
+                    adjusted_new_col = (adjusted_new_col as isize + change) as usize;
                 }
                 self.cursor.col = adjusted_new_col.min(self.document.columns.len().saturating_sub(1));
             } else {
@@ -405,7 +419,8 @@ impl Editor {
         for c in &mut self.document.columns[box_start..box_end] {
             c.set_char(string, '-');
         }
-        self.shrink_box_to_fit(col);
+        let (target, current) = self.get_target_and_current_box_size(col);
+        self.apply_box_adjustment(col, target, current, true);
     }
 
     pub fn expand_active_box(&mut self) {
@@ -456,32 +471,32 @@ impl Editor {
         
         self.save_state();
         
-        // If the cursor is on a '-', replace it instead of inserting
         if is_replace {
             self.document.columns[col].set_char(string, c);
             
             let (_, box_end) = self.document.box_range(col);
             if col + 1 == box_end {
-                // We replaced the last column of the box.
-                // Insert an empty column to keep the box open and cursor inside it.
                 let mut new_col = TabColumn::new();
                 new_col.is_box_start = false;
                 self.document.columns.insert(col + 1, new_col);
             }
             
             self.cursor.col += 1;
-            return Ok(());
+        } else {
+            let was_start = self.document.columns[col].is_box_start;
+            self.document.columns[col].is_box_start = false;
+            
+            let mut new_col = TabColumn::new();
+            new_col.is_box_start = was_start;
+            new_col.set_char(string, c);
+            
+            self.document.columns.insert(col, new_col);
+            self.cursor.col += 1;
         }
         
-        let was_start = self.document.columns[col].is_box_start;
-        self.document.columns[col].is_box_start = false;
+        let (target, current) = self.get_target_and_current_box_size(col);
+        self.apply_box_adjustment(col, target, current, false);
         
-        let mut new_col = TabColumn::new();
-        new_col.is_box_start = was_start;
-        new_col.set_char(string, c);
-        
-        self.document.columns.insert(col, new_col);
-        self.cursor.col += 1;
         Ok(())
     }
 
@@ -523,7 +538,18 @@ impl Editor {
             self.document.columns[c].set_char(string, next_char);
         }
         self.document.columns[box_end - 1].set_char(string, '-');
-        self.shrink_box_to_fit(col);
+        let (target, current) = self.get_target_and_current_box_size(col);
+        self.apply_box_adjustment(col, target, current, true);
+    }
+
+    fn replace_chars_impl(&mut self, chars: &[char]) {
+        while self.cursor.col + chars.len() > self.document.columns.len() {
+            self.document.columns.push(TabColumn::new());
+        }
+
+        for (i, &c) in chars.iter().enumerate() {
+            self.document.columns[self.cursor.col + i].set_char(self.cursor.string, c);
+        }
     }
 
     pub fn replace_chars(&mut self, chars: &[char]) -> Result<(), &'static str> {
@@ -535,15 +561,22 @@ impl Editor {
         }
         
         self.save_state();
-        
-        // Ensure we have enough columns to fit the characters
-        while self.cursor.col + chars.len() > self.document.columns.len() {
-            self.document.columns.push(TabColumn::new());
-        }
+        self.replace_chars_impl(chars);
+        Ok(())
+    }
 
-        for (i, &c) in chars.iter().enumerate() {
-            self.document.columns[self.cursor.col + i].set_char(string, c);
+    pub fn replace_chars_and_adjust(&mut self, chars: &[char]) -> Result<(), &'static str> {
+        let col = self.cursor.col;
+        let string = self.cursor.string;
+        
+        if self.check_adjacency_after_replace(col, string, chars) {
+            return Err("Cannot have more than 2 consecutive digits");
         }
+        
+        self.save_state();
+        self.replace_chars_impl(chars);
+        let (target, current) = self.get_target_and_current_box_size(col);
+        self.apply_box_adjustment(col, target, current, true);
         Ok(())
     }
 
@@ -845,7 +878,7 @@ mod tests {
         assert_eq!(e - s, 3); // Box 0 expanded to size 3
         
         // Exit Insert Mode (simulated by calling shrink_box_to_fit)
-        ed.shrink_box_to_fit(0);
+        ed.adjust_box_to_fit(0);
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 2); // Box 0 shrunk to size 2 (content "12")
         assert_eq!(ed.cursor.col, 1); // Cursor adjusted to 1
@@ -892,7 +925,7 @@ mod tests {
         
         ed.replace_chars(&['1', '2']).unwrap();
         
-        ed.shrink_box_to_fit(0);
+        ed.adjust_box_to_fit(0);
         
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 2);
@@ -942,7 +975,7 @@ mod tests {
         
         ed.replace_chars(&['2']).unwrap();
         
-        ed.shrink_box_to_fit(0);
+        ed.adjust_box_to_fit(0);
         
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 2);
@@ -952,7 +985,7 @@ mod tests {
         // Fret 12 on E string (translates to E, len 1)
         ed.replace_chars(&['1', '2']).unwrap();
         
-        ed.shrink_box_to_fit(0);
+        ed.adjust_box_to_fit(0);
         
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 2);
@@ -969,7 +1002,7 @@ mod tests {
         
         ed.replace_chars(&['1']).unwrap();
         
-        ed.shrink_box_to_fit(0);
+        ed.adjust_box_to_fit(0);
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 1);
         assert_eq!(ed.document.columns[0].get_char(0), '1');
@@ -987,7 +1020,7 @@ mod tests {
         ed.insert_char_in_box('1').unwrap();
         ed.insert_char_in_box('2').unwrap();
         
-        ed.shrink_box_to_fit(0);
+        ed.adjust_box_to_fit(0);
         
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 5);
