@@ -905,14 +905,34 @@ impl Editor {
                 continue;
             }
             
-            let (box_start, box_end) = self.document.box_range(col);
+            let (box_start, mut box_end) = self.document.box_range(col);
             
-            for col_idx in box_start..box_end {
+            let mut col_idx = box_start;
+            while col_idx < box_end {
+                let mut has_accidental = false;
+                let mut safe_to_delete = true;
                 for string_idx in 0..num_strings {
                     let c = self.document.columns[col_idx].get_char(string_idx);
                     if c == '#' || c == 'b' {
-                        self.document.columns[col_idx].set_char(string_idx, '-');
+                        has_accidental = true;
+                    } else if c != '-' {
+                        safe_to_delete = false;
                     }
+                }
+                
+                if has_accidental && safe_to_delete {
+                    self.document.columns.remove(col_idx);
+                    box_end -= 1;
+                } else {
+                    if has_accidental {
+                        for string_idx in 0..num_strings {
+                            let c = self.document.columns[col_idx].get_char(string_idx);
+                            if c == '#' || c == 'b' {
+                                self.document.columns[col_idx].set_char(string_idx, '-');
+                            }
+                        }
+                    }
+                    col_idx += 1;
                 }
             }
             

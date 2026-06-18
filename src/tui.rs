@@ -458,5 +458,16 @@ mod tests {
         
         let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(b_line_str.starts_with("B|C#/C#/C#/C#"), "Actual: {}", b_line_str);
+        
+        app.note_mode = false;
+        app.editor.transform_to_fret_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        let b_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("B|")
+        }).unwrap();
+        let b_line_str: String = b_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(b_line_str.starts_with("B|2/2/2/2"), "Actual after toggle off: {}", b_line_str);
     }
 }
