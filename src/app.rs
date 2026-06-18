@@ -228,6 +228,11 @@ impl App {
             KeyCode::Char('n') => {
                 self.count_buffer.clear();
                 self.note_mode = !self.note_mode;
+                if self.note_mode {
+                    self.editor.transform_to_note_mode();
+                } else {
+                    self.editor.transform_to_fret_mode();
+                }
             }
             KeyCode::Char('?') => {
                 self.count_buffer.clear();
@@ -675,8 +680,8 @@ mod tests {
         
         app.handle_continuous_replace(press_key(KeyCode::Char('2')));
         assert_eq!(app.editor.document.columns[35].get_char(0), '2');
-        assert_eq!(app.editor.cursor.col, 38);
-        assert_eq!(app.editor.document.columns.len(), 47);
+        assert_eq!(app.editor.cursor.col, 37);
+        assert_eq!(app.editor.document.columns.len(), 46);
     }
 
     #[test]

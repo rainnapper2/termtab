@@ -290,47 +290,33 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
                 };
 
                 if app.note_mode && c.is_ascii_digit() {
-                    let mut fret_str = c.to_string();
-                    let mut consumed_next = false;
-                    if i + 1 < chunk.len() && !chunk[i+1].is_box_start && chunk[i+1].get_char(string_idx).is_ascii_digit() {
-                        fret_str.push(chunk[i+1].get_char(string_idx));
-                        consumed_next = true;
-                    }
+                    let (box_start, box_end) = app.editor.document.box_range(global_col);
+                    let is_group_start = global_col == box_start || 
+                        !app.editor.document.columns[global_col - 1].get_char(string_idx).is_ascii_digit();
                     
-                    if let Ok(fret) = fret_str.parse::<u32>() {
-                        let note = fret_to_note(tuning_char, fret, column_keys[global_col].as_deref());
-                        let note_chars: Vec<char> = note.chars().collect();
-                        
-                        string_chars.push(Span::styled(note_chars[0].to_string(), style));
-                        if is_active_string && global_col == app.editor.cursor.col {
-                            cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
+                    if is_group_start {
+                        let mut group_end = global_col + 1;
+                        while group_end < box_end && app.editor.document.columns[group_end].get_char(string_idx).is_ascii_digit() {
+                            group_end += 1;
                         }
-                        visual_col_offset += 1;
-
-                        if note_chars.len() > 1 {
-                            if consumed_next {
-                                string_chars.push(Span::styled(note_chars[1].to_string(), style));
-                                visual_col_offset += 1;
-                                i += 1;
-                            } else {
-                                if i + 1 < chunk.len() {
-                                    string_chars.push(Span::styled(note_chars[1].to_string(), style));
-                                    visual_col_offset += 1;
-                                    i += 1;
-                                }
-                            }
-                        } else if consumed_next {
-                            string_chars.push(Span::styled("-".to_string(), style));
-                            visual_col_offset += 1;
-                            i += 1;
+                        let mut fret_str = String::new();
+                        for col_idx in global_col..group_end {
+                            fret_str.push(app.editor.document.columns[col_idx].get_char(string_idx));
+                        }
+                        if let Ok(fret) = fret_str.parse::<u32>() {
+                            let note = fret_to_note(tuning_char, fret, column_keys[global_col].as_deref());
+                            let first_char = note.chars().next().unwrap_or('-');
+                            string_chars.push(Span::styled(first_char.to_string(), style));
+                        } else {
+                            string_chars.push(Span::styled(c.to_string(), style));
                         }
                     } else {
-                        string_chars.push(Span::styled(c.to_string(), style));
-                        if is_active_string && global_col == app.editor.cursor.col {
-                            cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
-                        }
-                        visual_col_offset += 1;
+                        string_chars.push(Span::styled("-".to_string(), style));
                     }
+                    if is_active_string && global_col == app.editor.cursor.col {
+                        cursor_visual_pos = Some((visual_col_offset, start_y + string_idx));
+                    }
+                    visual_col_offset += 1;
                 } else {
                     string_chars.push(Span::styled(c.to_string(), style));
                     if is_active_string && global_col == app.editor.cursor.col {

@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use crate::notes::parse_key_signature;
 
 pub const DEFAULT_MEASURE_LEN: usize = 8;
 pub const DEFAULT_BOX_LEN: usize = 1;
@@ -110,6 +111,19 @@ pub struct TabDocument {
 }
 
 impl TabDocument {
+    pub fn get_key_signature_at(&self, col: usize) -> Option<String> {
+        let mut curr = col;
+        while curr > 0 {
+            curr -= 1;
+            if let Some(text) = &self.columns[curr].annotation {
+                if let Some(key) = parse_key_signature(text) {
+                    return Some(key);
+                }
+            }
+        }
+        None
+    }
+
     pub fn new(tuning: Vec<char>) -> Self {
         let num_strings = tuning.len();
         // Start with 4 measures of DEFAULT_MEASURE_LEN empty columns each

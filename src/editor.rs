@@ -8,6 +8,8 @@ pub struct Editor {
     pub cursor: Cursor,
     pub undo_stack: Vec<(TabDocument, Cursor)>,
     pub redo_stack: Vec<(TabDocument, Cursor)>,
+    #[serde(default)]
+    pub note_mode: bool,
 }
 
 impl Editor {
@@ -17,6 +19,7 @@ impl Editor {
             cursor: Cursor::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            note_mode: false,
         }
     }
 
@@ -104,12 +107,16 @@ impl Editor {
                     fret_width = i + 1;
                 }
             }
-            let note_width = Self::required_note_width_for_string(
-                &self.document.columns[box_start..box_start + fret_width],
-                string,
-                tuning,
-            );
-            let required_width = fret_width.max(note_width);
+            let required_width = if self.note_mode {
+                let note_width = Self::required_note_width_for_string(
+                    &self.document.columns[box_start..box_start + fret_width],
+                    string,
+                    tuning,
+                );
+                fret_width.max(note_width)
+            } else {
+                fret_width
+            };
             if required_width > max_len {
                 max_len = required_width;
             }
@@ -795,6 +802,100 @@ impl Editor {
             }
         }
     }
+
+    pub fn transform_to_note_mode(&mut self) {
+        self.note_mode = true;
+        let num_strings = self.document.tuning.len();
+        let mut col = 0;
+        while col < self.document.columns.len() {
+            if self.document.columns[col].is_barline(num_strings) {
+                col += 1;
+                continue;
+            }
+            
+            let (box_start, box_end) = self.document.box_range(col);
+            let box_size = box_end - box_start;
+            
+            let mut max_width = 1;
+            for string_idx in 0..num_strings {
+                let tuning_char = self.document.tuning[string_idx];
+                let mut fret_str = String::new();
+                for col_idx in box_start..box_end {
+                    let c = self.document.columns[col_idx].get_char(string_idx);
+                    if c.is_ascii_digit() {
+                        fret_str.push(c);
+                    }
+                }
+                if let Ok(fret) = fret_str.parse::<u32>() {
+                    let key = self.document.get_key_signature_at(box_start);
+                    let note = fret_to_note(tuning_char, fret, key.as_deref());
+                    if note.len() > 1 {
+                        max_width = 2;
+                    }
+                }
+            }
+            
+            let mut current_box_end = box_end;
+            if max_width > box_size {
+                let grow_by = max_width - box_size;
+                for _ in 0..grow_by {
+                    let mut new_col = TabColumn::new();
+                    new_col.is_box_start = false;
+                    self.document.columns.insert(current_box_end, new_col);
+                }
+                current_box_end += grow_by;
+            }
+            
+            for string_idx in 0..num_strings {
+                let tuning_char = self.document.tuning[string_idx];
+                let mut fret_str = String::new();
+                for col_idx in box_start..box_end {
+                    let c = self.document.columns[col_idx].get_char(string_idx);
+                    if c.is_ascii_digit() {
+                        fret_str.push(c);
+                    }
+                }
+                if let Ok(fret) = fret_str.parse::<u32>() {
+                    let key = self.document.get_key_signature_at(box_start);
+                    let note = fret_to_note(tuning_char, fret, key.as_deref());
+                    if note.len() > 1 {
+                        let accidental = note.chars().nth(1).unwrap();
+                        self.document.columns[box_start + 1].set_char(string_idx, accidental);
+                    }
+                }
+            }
+            
+            col = current_box_end;
+        }
+    }
+
+    pub fn transform_to_fret_mode(&mut self) {
+        self.note_mode = false;
+        let num_strings = self.document.tuning.len();
+        let mut col = 0;
+        while col < self.document.columns.len() {
+            if self.document.columns[col].is_barline(num_strings) {
+                col += 1;
+                continue;
+            }
+            
+            let (box_start, box_end) = self.document.box_range(col);
+            
+            for col_idx in box_start..box_end {
+                for string_idx in 0..num_strings {
+                    let c = self.document.columns[col_idx].get_char(string_idx);
+                    if c == '#' || c == 'b' {
+                        self.document.columns[col_idx].set_char(string_idx, '-');
+                    }
+                }
+            }
+            
+            let change = self.adjust_box_to_fit(box_start);
+            let new_box_end = (box_end as isize + change) as usize;
+            
+            col = new_box_end;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1084,6 +1185,7 @@ mod tests {
     #[test]
     fn test_editor_shrink_to_fit_note_mode() {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.note_mode = true;
         ed.cursor.col = 0;
         ed.cursor.string = 0;
         
@@ -1235,5 +1337,30 @@ mod tests {
         
         ed.move_box_left();
         assert_eq!(ed.cursor.col, bar_col - 1);
+    }
+
+    #[test]
+    fn test_editor_note_mode_transformations() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.string = 1;
+        ed.cursor.col = 1;
+        ed.insert_char_in_box('2').unwrap(); // B:2 -> C#
+        ed.adjust_box_to_fit(1);
+        
+        assert_eq!(ed.document.columns.len(), 37);
+        assert_eq!(ed.document.columns[1].get_char(1), '2');
+        
+        ed.transform_to_note_mode();
+        
+        assert_eq!(ed.document.columns.len(), 38);
+        assert_eq!(ed.document.columns[1].get_char(1), '2');
+        assert_eq!(ed.document.columns[2].get_char(1), '#');
+        assert_eq!(ed.document.columns[2].is_box_start, false);
+        
+        ed.transform_to_fret_mode();
+        
+        assert_eq!(ed.document.columns.len(), 37);
+        assert_eq!(ed.document.columns[1].get_char(1), '2');
+        assert_ne!(ed.document.columns[2].get_char(1), '#');
     }
 }
