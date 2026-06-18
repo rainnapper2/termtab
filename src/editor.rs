@@ -99,6 +99,85 @@ impl Editor {
         }
     }
 
+    fn check_adjacency_after_replace(&self, col: usize, string: usize, chars: &[char]) -> bool {
+        let mut doc_clone = self.document.clone();
+        for (i, &c) in chars.iter().enumerate() {
+            let target_col = col + i;
+            while target_col >= doc_clone.columns.len() {
+                doc_clone.append_measure();
+            }
+            doc_clone.columns[target_col].set_char(string, c);
+        }
+        
+        let check_start = col.saturating_sub(2);
+        let check_end = (col + chars.len() + 2).min(doc_clone.columns.len());
+        
+        let num_strings = doc_clone.tuning.len();
+        let is_digit = |idx: usize| -> bool {
+            if doc_clone.columns[idx].is_barline(num_strings) {
+                false
+            } else {
+                doc_clone.columns[idx].get_char(string).is_ascii_digit()
+            }
+        };
+        
+        let mut consecutive = 0;
+        for idx in check_start..check_end {
+            if is_digit(idx) {
+                consecutive += 1;
+                if consecutive > 2 {
+                    return true;
+                }
+            } else {
+                consecutive = 0;
+            }
+        }
+        false
+    }
+
+    fn check_adjacency_after_insert(&self, col: usize, string: usize, c: char, is_replace: bool) -> bool {
+        let mut doc_clone = self.document.clone();
+        if col >= doc_clone.columns.len() {
+            doc_clone.append_measure();
+        }
+        
+        if is_replace {
+            doc_clone.columns[col].set_char(string, c);
+        } else {
+            let was_start = doc_clone.columns[col].is_box_start;
+            doc_clone.columns[col].is_box_start = false;
+            let mut new_col = TabColumn::new();
+            new_col.is_box_start = was_start;
+            new_col.set_char(string, c);
+            doc_clone.columns.insert(col, new_col);
+        }
+        
+        let check_start = col.saturating_sub(2);
+        let check_end = (col + 3).min(doc_clone.columns.len());
+        
+        let num_strings = doc_clone.tuning.len();
+        let is_digit = |idx: usize| -> bool {
+            if doc_clone.columns[idx].is_barline(num_strings) {
+                false
+            } else {
+                doc_clone.columns[idx].get_char(string).is_ascii_digit()
+            }
+        };
+        
+        let mut consecutive = 0;
+        for idx in check_start..check_end {
+            if is_digit(idx) {
+                consecutive += 1;
+                if consecutive > 2 {
+                    return true;
+                }
+            } else {
+                consecutive = 0;
+            }
+        }
+        false
+    }
+
     pub fn move_cursor(&mut self, dx: isize, dy: isize) {
         let new_string = (self.cursor.string as isize + dy).clamp(0, self.document.tuning.len().saturating_sub(1) as isize) as usize;
         
@@ -312,14 +391,19 @@ impl Editor {
             return Err("Cannot insert inside a barline");
         }
         
-        self.save_state();
-        
         if col >= self.document.columns.len() {
             self.document.append_measure();
         }
         
+        let is_replace = self.document.columns[col].get_char(string) == '-';
+        if self.check_adjacency_after_insert(col, string, c, is_replace) {
+            return Err("Cannot have more than 2 consecutive digits");
+        }
+        
+        self.save_state();
+        
         // If the cursor is on a '-', replace it instead of inserting
-        if self.document.columns[col].get_char(string) == '-' {
+        if is_replace {
             self.document.columns[col].set_char(string, c);
             
             let (_, box_end) = self.document.box_range(col);
@@ -388,7 +472,14 @@ impl Editor {
         self.shrink_box_to_fit(col);
     }
 
-    pub fn replace_chars(&mut self, chars: &[char]) {
+    pub fn replace_chars(&mut self, chars: &[char]) -> Result<(), &'static str> {
+        let col = self.cursor.col;
+        let string = self.cursor.string;
+        
+        if self.check_adjacency_after_replace(col, string, chars) {
+            return Err("Cannot have more than 2 consecutive digits");
+        }
+        
         self.save_state();
         
         // Ensure we have enough columns to fit the characters
@@ -397,8 +488,9 @@ impl Editor {
         }
 
         for (i, &c) in chars.iter().enumerate() {
-            self.document.columns[self.cursor.col + i].set_char(self.cursor.string, c);
+            self.document.columns[self.cursor.col + i].set_char(string, c);
         }
+        Ok(())
     }
 
     pub fn insert_barline(&mut self) -> Result<(), &'static str> {
@@ -522,16 +614,16 @@ mod tests {
     #[test]
     fn test_editor_insert_delete_box() {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
-        assert_eq!(ed.document.columns.len(), 69); // 4 measures * 16 cols + 5 barlines = 69
+        assert_eq!(ed.document.columns.len(), 37); // 4 measures * 8 cols + 5 barlines = 37
         ed.insert_box();
-        assert_eq!(ed.document.columns.len(), 70);
+        assert_eq!(ed.document.columns.len(), 38);
         ed.undo();
-        assert_eq!(ed.document.columns.len(), 69);
+        assert_eq!(ed.document.columns.len(), 37);
         ed.redo();
-        assert_eq!(ed.document.columns.len(), 70);
+        assert_eq!(ed.document.columns.len(), 38);
 
         ed.delete_box();
-        assert_eq!(ed.document.columns.len(), 69);
+        assert_eq!(ed.document.columns.len(), 37);
     }
 
     #[test]
@@ -551,15 +643,15 @@ mod tests {
         ed.move_cursor(-1, 0);
         assert_eq!(ed.cursor.col, 1);
 
-        // Move to end of measure 1 (col 15)
-        ed.cursor.col = 15;
-        // Move right: should go to col 17 (barline at 16)
+        // Move to end of measure 1 (col 7)
+        ed.cursor.col = 7;
+        // Move right: should go to col 9 (barline at 8)
         ed.move_cursor(1, 0);
-        assert_eq!(ed.cursor.col, 17);
+        assert_eq!(ed.cursor.col, 9);
         
-        // Move left from 17: should go to 15 (barline at 16)
+        // Move left from 9: should go to 7 (barline at 8)
         ed.move_cursor(-1, 0);
-        assert_eq!(ed.cursor.col, 15);
+        assert_eq!(ed.cursor.col, 7);
     }
 
     #[test]
@@ -567,7 +659,7 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
-        ed.replace_chars(&['1', '1']);
+        ed.replace_chars(&['1', '1']).unwrap();
         assert_eq!(ed.document.columns[0].get_char(0), '1');
         assert_eq!(ed.document.columns[1].get_char(0), '1');
         assert_eq!(ed.document.columns[2].get_char(0), '-');
@@ -582,30 +674,26 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
-        ed.replace_chars(&['9', '9', '9']);
+        ed.replace_chars(&['9', '9']).unwrap();
         
-        ed.copy_columns(0, 2);
-        assert_eq!(ed.document.clipboard.len(), 3);
+        ed.copy_columns(0, 1);
+        assert_eq!(ed.document.clipboard.len(), 2);
         assert_eq!(ed.document.clipboard[0].get_char(0), '9');
 
         ed.cursor.col = 6;
         ed.paste_columns();
         
-        // M1: cols 0..5 (original) + clip (3) + cols 6..12 (original) = 16 cols
         assert_eq!(ed.document.columns[0].get_char(0), '9');
         assert_eq!(ed.document.columns[1].get_char(0), '9');
-        assert_eq!(ed.document.columns[2].get_char(0), '9');
-        assert_eq!(ed.document.columns[3].get_char(0), '-');
+        assert_eq!(ed.document.columns[2].get_char(0), '-');
         assert_eq!(ed.document.columns[6].get_char(0), '9');
         assert_eq!(ed.document.columns[7].get_char(0), '9');
-        assert_eq!(ed.document.columns[8].get_char(0), '9');
-        assert_eq!(ed.document.columns[16].get_char(0), '|');
+        assert_eq!(ed.document.columns[8].get_char(0), '|');
         
-        // M2: cols 13..15 (original M1 overflow, 3 cols) + 13 cols of original M2 = 16 cols
-        assert_eq!(ed.document.columns[17].get_char(0), '-');
-        assert_eq!(ed.document.columns[33].get_char(0), '|');
+        assert_eq!(ed.document.columns[9].get_char(0), '-');
+        assert_eq!(ed.document.columns[17].get_char(0), '|');
         
-        assert_eq!(ed.document.columns.len(), 86);
+        assert_eq!(ed.document.columns.len(), 46);
     }
 
     #[test]
@@ -613,24 +701,22 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
-        ed.replace_chars(&['9', '9', '9']);
+        ed.replace_chars(&['9', '9']).unwrap();
         
-        ed.copy_columns(0, 2);
+        ed.copy_columns(0, 1);
         
-        ed.cursor.col = 17; // Start of M2
+        ed.cursor.col = 9; // Start of M2
         ed.paste_columns();
         
-        // M2: clip (3) + 13 empty of M2 = 16 cols
-        assert_eq!(ed.document.columns[17].get_char(0), '9');
-        assert_eq!(ed.document.columns[18].get_char(0), '9');
-        assert_eq!(ed.document.columns[19].get_char(0), '9');
-        assert_eq!(ed.document.columns[33].get_char(0), '|');
+        assert_eq!(ed.document.columns[9].get_char(0), '9');
+        assert_eq!(ed.document.columns[10].get_char(0), '9');
+        assert_eq!(ed.document.columns[11].get_char(0), '-');
+        assert_eq!(ed.document.columns[17].get_char(0), '|');
         
-        // M3: 3 empty (overflow M2) + 13 empty M3 = 16 cols
-        assert_eq!(ed.document.columns[34].get_char(0), '-');
-        assert_eq!(ed.document.columns[50].get_char(0), '|');
+        assert_eq!(ed.document.columns[18].get_char(0), '-');
+        assert_eq!(ed.document.columns[26].get_char(0), '|');
         
-        assert_eq!(ed.document.columns.len(), 86);
+        assert_eq!(ed.document.columns.len(), 46);
     }
 
     #[test]
@@ -638,10 +724,10 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
-        ed.replace_chars(&['9', '9', '9']);
+        ed.replace_chars(&['9', '9']).unwrap();
         
         ed.cursor.string = 1;
-        ed.replace_chars(&['8', '8', '8']);
+        ed.replace_chars(&['8', '8']).unwrap();
         
         assert_eq!(ed.document.columns[0].get_char(0), '9');
         assert_eq!(ed.document.columns[0].get_char(1), '8');
@@ -653,8 +739,7 @@ mod tests {
         assert_eq!(ed.document.columns[0].get_char(1), '8');
         
         assert_eq!(ed.document.columns[1].get_char(0), '9');
-        assert_eq!(ed.document.columns[2].get_char(0), '9');
-        assert_eq!(ed.document.columns.len(), 69);
+        assert_eq!(ed.document.columns.len(), 37);
     }
 
     #[test]
@@ -662,19 +747,18 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         
-        // Default size is 1
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 1);
         
         ed.expand_active_box();
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 2);
-        assert_eq!(ed.document.columns.len(), 70);
+        assert_eq!(ed.document.columns.len(), 38);
         
         ed.shrink_active_box();
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 1);
-        assert_eq!(ed.document.columns.len(), 69);
+        assert_eq!(ed.document.columns.len(), 37);
         
         ed.shrink_active_box();
         let (s, e) = ed.document.box_range(0);
@@ -722,24 +806,24 @@ mod tests {
         ed.expand_active_box();
         ed.expand_active_box();
         
-        ed.replace_chars(&['1', '2', '3']);
+        ed.replace_chars(&['1', '2']).unwrap();
         
         ed.cursor.string = 1;
-        ed.replace_chars(&['a', 'b', 'c']);
+        ed.replace_chars(&['a', 'b', 'c']).unwrap();
         
         ed.cursor.string = 0;
         ed.cursor.col = 1;
         ed.delete_char_in_box_at_cursor();
         
         assert_eq!(ed.document.columns[0].get_char(0), '1');
-        assert_eq!(ed.document.columns[1].get_char(0), '3');
+        assert_eq!(ed.document.columns[1].get_char(0), '-');
         assert_eq!(ed.document.columns[2].get_char(0), '-');
         
         assert_eq!(ed.document.columns[0].get_char(1), 'a');
         assert_eq!(ed.document.columns[1].get_char(1), 'b');
         assert_eq!(ed.document.columns[2].get_char(1), 'c');
         
-        assert_eq!(ed.document.columns.len(), 71);
+        assert_eq!(ed.document.columns.len(), 39);
     }
 
     #[test]
@@ -752,7 +836,7 @@ mod tests {
         ed.expand_active_box();
         ed.expand_active_box();
         
-        ed.replace_chars(&['1', '2']);
+        ed.replace_chars(&['1', '2']).unwrap();
         
         ed.shrink_box_to_fit(0);
         
@@ -766,5 +850,28 @@ mod tests {
         
         ed.jump_to_col(4);
         assert_eq!(ed.cursor.col, 2);
+    }
+
+    #[test]
+    fn test_editor_adjacency_constraint() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
+        
+        ed.replace_chars(&['1']).unwrap();
+        ed.cursor.col = 1;
+        ed.replace_chars(&['2']).unwrap();
+        
+        ed.cursor.col = 2;
+        assert!(ed.replace_chars(&['3']).is_err());
+        
+        ed.cursor.col = 1;
+        assert!(ed.insert_char_in_box('3').is_err());
+        
+        ed.cursor.col = 2;
+        ed.replace_chars(&['h']).unwrap();
+        
+        ed.cursor.col = 3;
+        ed.replace_chars(&['3']).unwrap();
     }
 }

@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-pub const DEFAULT_MEASURE_LEN: usize = 16;
+pub const DEFAULT_MEASURE_LEN: usize = 8;
 pub const DEFAULT_BOX_LEN: usize = 1;
 
 use std::collections::BTreeMap;
@@ -112,7 +112,7 @@ pub struct TabDocument {
 impl TabDocument {
     pub fn new(tuning: Vec<char>) -> Self {
         let num_strings = tuning.len();
-        // Start with 4 measures of 16 empty columns each
+        // Start with 4 measures of DEFAULT_MEASURE_LEN empty columns each
         let mut columns = Vec::new();
         let m_len = DEFAULT_MEASURE_LEN;
         let box_len = DEFAULT_BOX_LEN;
@@ -402,18 +402,18 @@ mod tests {
         let doc = TabDocument::default();
         assert_eq!(doc.measure_start_col(0), 0);
         assert_eq!(doc.measure_start_col(5), 0);
-        assert_eq!(doc.measure_start_col(15), 0);
-        assert_eq!(doc.measure_start_col(16), 0); // barline
-        assert_eq!(doc.measure_start_col(17), 17); // M2 start
-        assert_eq!(doc.measure_start_col(20), 17);
-        assert_eq!(doc.measure_start_col(33), 17); // barline
+        assert_eq!(doc.measure_start_col(8), 0); // barline M1
+        assert_eq!(doc.measure_start_col(9), 9); // M2 start
+        assert_eq!(doc.measure_start_col(12), 9);
+        assert_eq!(doc.measure_start_col(17), 9); // barline M2
+        assert_eq!(doc.measure_start_col(18), 18); // M3 start
     }
 
     #[test]
     fn test_dump_to_string() {
         let doc = TabDocument::default();
         let dump = doc.dump_to_string(200);
-        assert!(dump.contains("e|-------------------------------|-------------------------------|-------------------------------|-------------------------------||"));
-        assert!(dump.contains("B|-------------------------------|-------------------------------|-------------------------------|-------------------------------||"));
+        assert!(dump.contains("e|---------------|---------------|---------------|---------------||"));
+        assert!(dump.contains("B|---------------|---------------|---------------|---------------||"));
     }
 }

@@ -321,7 +321,7 @@ impl App {
                 }
                 
                 if !self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
-                    self.editor.replace_chars(&['-']);
+                    self.editor.replace_chars(&['-']).unwrap();
                 }
             }
             KeyCode::Char(c) => {
@@ -339,7 +339,10 @@ impl App {
                     self.editor.move_cursor(1, 0);
                 } else {
                     let insert_c = if c == ' ' { '-' } else { c };
-                    self.editor.replace_chars(&[insert_c]);
+                    if let Err(e) = self.editor.replace_chars(&[insert_c]) {
+                        self.error_msg = Some(e.to_string());
+                        return;
+                    }
                     self.editor.move_cursor(1, 0);
                 }
             }
@@ -350,7 +353,9 @@ impl App {
     fn commit_replace(&mut self, buffer: &str) {
         if buffer.is_empty() { return; }
         let chars: Vec<char> = buffer.chars().map(|c| if c == ' ' { '-' } else { c }).collect();
-        self.editor.replace_chars(&chars);
+        if let Err(e) = self.editor.replace_chars(&chars) {
+            self.error_msg = Some(e.to_string());
+        }
     }
 
     fn handle_prompt(&mut self, key: event::KeyEvent, mut buffer: String) {
