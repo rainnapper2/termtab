@@ -571,23 +571,32 @@ impl Editor {
 
     pub fn delete_char_before_cursor(&mut self) {
         if self.cursor.col == 0 { return; }
-        let prev_col = self.cursor.col - 1;
+        let col = self.cursor.col;
+        let string = self.cursor.string;
         let num_strings = self.document.tuning.len();
+        
+        let prev_col = col - 1;
         if self.document.columns[prev_col].is_barline(num_strings) {
-            return; // Don't delete barlines with backspace
+            return;
+        }
+        
+        let (box_start, box_end) = self.document.box_range(col);
+        if prev_col < box_start {
+            return;
         }
         
         self.save_state();
-        let was_start = self.document.columns[prev_col].is_box_start;
-        self.document.columns.remove(prev_col);
         
-        if was_start && prev_col < self.document.columns.len() {
-            if !self.document.columns[prev_col].is_barline(num_strings) {
-                self.document.columns[prev_col].is_box_start = true;
-            }
+        for c in prev_col..(box_end - 1) {
+            let next_char = self.document.columns[c + 1].get_char(string);
+            self.document.columns[c].set_char(string, next_char);
         }
+        self.document.columns[box_end - 1].set_char(string, '-');
         
         self.cursor.col = prev_col;
+        
+        let (target, current) = self.get_target_and_current_box_size(col);
+        self.apply_box_adjustment(col, target, current, false);
     }
 
     pub fn delete_char_in_box_at_cursor(&mut self) {
@@ -1114,6 +1123,47 @@ mod tests {
         assert_eq!(ed.document.columns[2].get_char(0), '/');
         assert_eq!(ed.document.columns[3].get_char(0), '1');
         assert_eq!(ed.document.columns[4].get_char(0), '2');
+    }
+
+    #[test]
+    fn test_editor_delete_char_before_cursor() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        
+        ed.cursor.col = 0;
+        ed.expand_active_box();
+        ed.expand_active_box();
+        
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
+        ed.replace_chars(&['1', '2']).unwrap();
+        
+        ed.cursor.col = 0;
+        ed.cursor.string = 1;
+        ed.replace_chars(&['3', '4']).unwrap();
+        
+        ed.cursor.col = 2;
+        ed.cursor.string = 1;
+        ed.delete_char_before_cursor();
+        
+        assert_eq!(ed.cursor.col, 1);
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[1].get_char(0), '2');
+        
+        assert_eq!(ed.document.columns[0].get_char(1), '3');
+        assert_eq!(ed.document.columns[1].get_char(1), '-');
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 3);
+        
+        ed.delete_char_before_cursor();
+        assert_eq!(ed.cursor.col, 0);
+        assert_eq!(ed.document.columns[0].get_char(1), '-');
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 3);
+        
+        ed.delete_char_before_cursor();
+        assert_eq!(ed.cursor.col, 0);
     }
 
     #[test]
