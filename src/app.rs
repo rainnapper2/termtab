@@ -556,9 +556,7 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
-                let old_col = self.editor.cursor.col;
-                self.editor.move_box_right();
-                if self.editor.cursor.col == old_col {
+                if !self.editor.move_box_right() {
                     // At the end of the document, append a measure
                     self.editor.document.append_measure();
                     self.editor.move_box_right();
@@ -739,9 +737,11 @@ mod tests {
         app.editor.replace_chars(&['1']).unwrap();
         
         app.editor.cursor.col = 2;
+        let initial_len = app.editor.document.columns.len();
         
         app.handle_insert(press_key(KeyCode::Enter));
         
+        assert_eq!(app.editor.document.columns.len(), initial_len - 2);
         assert_eq!(app.mode, Mode::Insert);
         assert_eq!(app.editor.cursor.col, 1);
         let (s, e) = app.editor.document.box_range(0);

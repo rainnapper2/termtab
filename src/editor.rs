@@ -167,10 +167,10 @@ impl Editor {
         }
     }
 
-    pub fn move_box_left(&mut self) {
+    pub fn move_box_left(&mut self) -> bool {
         let col = self.cursor.col;
         let num_strings = self.document.tuning.len();
-        if col >= self.document.columns.len() { return; }
+        if col >= self.document.columns.len() { return false; }
         if self.document.columns[col].is_barline(num_strings) {
             let mut prev_col = col;
             while prev_col > 0 {
@@ -178,10 +178,10 @@ impl Editor {
                 if !self.document.columns[prev_col].is_barline(num_strings) {
                     let (start, _) = self.document.box_range(prev_col);
                     self.jump_to_col(start);
-                    return;
+                    return true;
                 }
             }
-            return;
+            return false;
         }
         
         let (box_start, _) = self.document.box_range(col);
@@ -192,18 +192,20 @@ impl Editor {
                 if !self.document.columns[prev_col].is_barline(num_strings) {
                     let (start, _) = self.document.box_range(prev_col);
                     self.jump_to_col(start);
-                    return;
+                    return true;
                 }
             }
+            false
         } else {
             self.jump_to_col(box_start);
+            true
         }
     }
 
-    pub fn move_box_right(&mut self) {
+    pub fn move_box_right(&mut self) -> bool {
         let col = self.cursor.col;
         let num_strings = self.document.tuning.len();
-        if col >= self.document.columns.len() { return; }
+        if col >= self.document.columns.len() { return false; }
         
         if self.document.columns[col].is_barline(num_strings) {
             let mut next_col = col;
@@ -212,10 +214,10 @@ impl Editor {
                 if !self.document.columns[next_col].is_barline(num_strings) {
                     let (start, _) = self.document.box_range(next_col);
                     self.jump_to_col(start);
-                    return;
+                    return true;
                 }
             }
-            return;
+            return false;
         }
         
         let (_, box_end) = self.document.box_range(col);
@@ -224,10 +226,11 @@ impl Editor {
             if !self.document.columns[next_col].is_barline(num_strings) {
                 let (start, _) = self.document.box_range(next_col);
                 self.jump_to_col(start);
-                return;
+                return true;
             }
             next_col += 1;
         }
+        false
     }
 
     fn check_adjacency_after_replace(&self, col: usize, string: usize, chars: &[char]) -> bool {
