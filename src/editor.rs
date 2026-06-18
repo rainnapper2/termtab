@@ -974,4 +974,27 @@ mod tests {
         assert_eq!(e - s, 1);
         assert_eq!(ed.document.columns[0].get_char(0), '1');
     }
+
+    #[test]
+    fn test_fret_12_slide_12() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
+        
+        ed.insert_char_in_box('1').unwrap();
+        ed.insert_char_in_box('2').unwrap();
+        ed.insert_char_in_box('/').unwrap();
+        ed.insert_char_in_box('1').unwrap();
+        ed.insert_char_in_box('2').unwrap();
+        
+        ed.shrink_box_to_fit(0);
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 5);
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[1].get_char(0), '2');
+        assert_eq!(ed.document.columns[2].get_char(0), '/');
+        assert_eq!(ed.document.columns[3].get_char(0), '1');
+        assert_eq!(ed.document.columns[4].get_char(0), '2');
+    }
 }

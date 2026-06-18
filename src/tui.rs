@@ -392,3 +392,34 @@ fn get_target_cursor_col(app: &App, active_box_start: usize) -> usize {
         _ => app.editor.cursor.col,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::Editor;
+
+    #[test]
+    fn test_render_note_mode_alignment() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        app.note_mode = true;
+        
+        app.editor.insert_char_in_box('1').unwrap();
+        app.editor.insert_char_in_box('2').unwrap();
+        app.editor.insert_char_in_box('/').unwrap();
+        app.editor.insert_char_in_box('1').unwrap();
+        app.editor.insert_char_in_box('2').unwrap();
+        
+        app.editor.shrink_box_to_fit(0);
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("e|")
+        }).unwrap();
+        
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(e_line_str, "e|E-/E--------------|---------------|---------------|---------------||");
+    }
+}
