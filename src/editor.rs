@@ -254,6 +254,9 @@ impl Editor {
         
         let mut consecutive = 0;
         for idx in check_start..check_end {
+            if doc_clone.columns[idx].is_box_start {
+                consecutive = 0;
+            }
             if is_digit(idx) {
                 consecutive += 1;
                 if consecutive > 2 {
@@ -297,6 +300,9 @@ impl Editor {
         
         let mut consecutive = 0;
         for idx in check_start..check_end {
+            if doc_clone.columns[idx].is_box_start {
+                consecutive = 0;
+            }
             if is_digit(idx) {
                 consecutive += 1;
                 if consecutive > 2 {
@@ -1008,20 +1014,36 @@ mod tests {
         ed.cursor.col = 0;
         ed.cursor.string = 0;
         
+        // Adjacent in separate boxes: allowed
         ed.replace_chars(&['1']).unwrap();
         ed.cursor.col = 1;
         ed.replace_chars(&['2']).unwrap();
-        
         ed.cursor.col = 2;
+        ed.replace_chars(&['3']).unwrap();
+        
+        // Adjacent in same box: blocked
+        ed.cursor.col = 4;
+        ed.expand_active_box();
+        ed.expand_active_box();
+        
+        ed.cursor.col = 4;
+        ed.replace_chars(&['1']).unwrap();
+        ed.cursor.col = 5;
+        ed.replace_chars(&['2']).unwrap();
+        
+        ed.cursor.col = 6;
         assert!(ed.replace_chars(&['3']).is_err());
         
-        ed.cursor.col = 1;
+        ed.cursor.col = 5;
         assert!(ed.insert_char_in_box('3').is_err());
         
-        ed.cursor.col = 2;
+        // Separated by non-digit in same box: allowed
+        ed.cursor.col = 6;
         ed.replace_chars(&['h']).unwrap();
         
-        ed.cursor.col = 3;
+        ed.cursor.col = 4;
+        ed.expand_active_box();
+        ed.cursor.col = 7;
         ed.replace_chars(&['3']).unwrap();
     }
 
