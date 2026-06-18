@@ -206,6 +206,7 @@ impl Editor {
 
     pub fn clear_box(&mut self) {
         let col = self.cursor.col;
+        let string = self.cursor.string;
         let num_strings = self.document.tuning.len();
         if self.document.columns[col].is_barline(num_strings) {
             return;
@@ -213,7 +214,7 @@ impl Editor {
         self.save_state();
         let (box_start, box_end) = self.document.box_range(col);
         for c in &mut self.document.columns[box_start..box_end] {
-            c.clear();
+            c.set_char(string, '-');
         }
     }
 
@@ -292,32 +293,23 @@ impl Editor {
         self.cursor.col = prev_col;
     }
 
-    pub fn delete_char_at_cursor(&mut self) {
+    pub fn delete_char_in_box_at_cursor(&mut self) {
         let col = self.cursor.col;
+        let string = self.cursor.string;
         let num_strings = self.document.tuning.len();
         if col >= self.document.columns.len() { return; }
         if self.document.columns[col].is_barline(num_strings) {
-            return; // Don't delete barlines
+            return;
         }
         
         self.save_state();
-        let was_start = self.document.columns[col].is_box_start;
-        self.document.columns.remove(col);
+        let (_, box_end) = self.document.box_range(col);
         
-        if was_start && col < self.document.columns.len() {
-            if !self.document.columns[col].is_barline(num_strings) {
-                self.document.columns[col].is_box_start = true;
-            }
+        for c in col..(box_end - 1) {
+            let next_char = self.document.columns[c + 1].get_char(string);
+            self.document.columns[c].set_char(string, next_char);
         }
-        
-        if self.cursor.col >= self.document.columns.len() {
-            self.cursor.col = self.document.columns.len() - 1;
-        }
-        if self.document.columns[self.cursor.col].is_barline(num_strings) {
-            if self.cursor.col > 0 {
-                self.cursor.col -= 1;
-            }
-        }
+        self.document.columns[box_end - 1].set_char(string, '-');
     }
 
     pub fn replace_chars(&mut self, chars: &[char]) {
@@ -571,12 +563,21 @@ mod tests {
         ed.cursor.col = 0;
         ed.cursor.string = 0;
         ed.replace_chars(&['9', '9', '9']);
-        assert_eq!(ed.document.columns[0].get_char(0), '9');
         
+        ed.cursor.string = 1;
+        ed.replace_chars(&['8', '8', '8']);
+        
+        assert_eq!(ed.document.columns[0].get_char(0), '9');
+        assert_eq!(ed.document.columns[0].get_char(1), '8');
+        
+        ed.cursor.string = 0;
         ed.clear_box();
+        
         assert_eq!(ed.document.columns[0].get_char(0), '-');
-        assert_eq!(ed.document.columns[1].get_char(0), '9'); // Col 1 is not cleared (Box 1)
-        assert_eq!(ed.document.columns[2].get_char(0), '9'); // Col 2 is not cleared (Box 2)
+        assert_eq!(ed.document.columns[0].get_char(1), '8');
+        
+        assert_eq!(ed.document.columns[1].get_char(0), '9');
+        assert_eq!(ed.document.columns[2].get_char(0), '9');
         assert_eq!(ed.document.columns.len(), 69);
     }
 
@@ -645,20 +646,31 @@ mod tests {
     }
 
     #[test]
-    fn test_editor_delete_char() {
+    fn test_editor_delete_char_in_box() {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         ed.cursor.string = 0;
+        
+        ed.expand_active_box();
+        ed.expand_active_box();
+        
         ed.replace_chars(&['1', '2', '3']);
         
+        ed.cursor.string = 1;
+        ed.replace_chars(&['a', 'b', 'c']);
+        
+        ed.cursor.string = 0;
         ed.cursor.col = 1;
-        ed.delete_char_at_cursor();
+        ed.delete_char_in_box_at_cursor();
         
         assert_eq!(ed.document.columns[0].get_char(0), '1');
         assert_eq!(ed.document.columns[1].get_char(0), '3');
-        assert_eq!(ed.cursor.col, 1);
+        assert_eq!(ed.document.columns[2].get_char(0), '-');
         
-        ed.delete_char_at_cursor();
-        assert_eq!(ed.document.columns[1].get_char(0), '-');
+        assert_eq!(ed.document.columns[0].get_char(1), 'a');
+        assert_eq!(ed.document.columns[1].get_char(1), 'b');
+        assert_eq!(ed.document.columns[2].get_char(1), 'c');
+        
+        assert_eq!(ed.document.columns.len(), 71);
     }
 }

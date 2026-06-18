@@ -220,7 +220,7 @@ impl App {
             }
             KeyCode::Char('x') => {
                 self.count_buffer.clear();
-                self.editor.delete_char_at_cursor();
+                self.editor.delete_char_in_box_at_cursor();
             }
             KeyCode::Char('d') => {
                 self.count_buffer.clear();
