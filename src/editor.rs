@@ -1,5 +1,6 @@
 use crate::document::{TabColumn, TabDocument, Cursor, DEFAULT_MEASURE_LEN};
 use serde::{Serialize, Deserialize};
+use crate::notes::fret_to_note;
 
 #[derive(Serialize, Deserialize)]
 pub struct Editor {
@@ -45,6 +46,48 @@ impl Editor {
 
 
 
+    fn required_note_width_for_string(cols: &[TabColumn], string: usize, tuning: char) -> usize {
+        let mut width = 0;
+        let mut i = 0;
+        while i < cols.len() {
+            let c = cols[i].get_char(string);
+            if c.is_ascii_digit() {
+                let mut fret_str = c.to_string();
+                let mut consumed_next = false;
+                if i + 1 < cols.len() && cols[i+1].get_char(string).is_ascii_digit() {
+                    fret_str.push(cols[i+1].get_char(string));
+                    consumed_next = true;
+                }
+                
+                if let Ok(fret) = fret_str.parse::<u32>() {
+                    let note = fret_to_note(tuning, fret, None);
+                    let note_len = note.chars().count();
+                    
+                    width += 1; // First char of note
+                    
+                    if note_len > 1 {
+                        if consumed_next {
+                            width += 1;
+                            i += 1; // Skip next digit (plus default i+=1 at end)
+                        } else if i + 1 < cols.len() {
+                            width += 1;
+                            i += 1; // Skip next char (plus default i+=1 at end)
+                        }
+                    } else if consumed_next {
+                        width += 1; // For the padding '-'
+                        i += 1; // Skip next digit
+                    }
+                }
+            } else {
+                if c != '-' {
+                    width += 1;
+                }
+            }
+            i += 1;
+        }
+        width
+    }
+
     pub fn shrink_box_to_fit(&mut self, col: usize) -> usize {
         let num_strings = self.document.tuning.len();
         if col >= self.document.columns.len() { return 0; }
@@ -55,14 +98,25 @@ impl Editor {
         let (box_start, box_end) = self.document.box_range(col);
         let mut max_len = 0;
         for string in 0..num_strings {
-            let mut len = 0;
+            let tuning = self.document.tuning[string];
+            // Fret width
+            let mut fret_width = 0;
             for (i, c) in (box_start..box_end).enumerate() {
                 if self.document.columns[c].get_char(string) != '-' {
-                    len = i + 1;
+                    fret_width = i + 1;
                 }
             }
-            if len > max_len {
-                max_len = len;
+            
+            // Note width
+            let note_width = Self::required_note_width_for_string(
+                &self.document.columns[box_start..box_end],
+                string,
+                tuning,
+            );
+            
+            let required_width = fret_width.max(note_width);
+            if required_width > max_len {
+                max_len = required_width;
             }
         }
         
@@ -873,5 +927,51 @@ mod tests {
         
         ed.cursor.col = 3;
         ed.replace_chars(&['3']).unwrap();
+    }
+
+    #[test]
+    fn test_editor_shrink_to_fit_note_mode() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
+        
+        // Fret 2 on E string (translates to F#, len 2)
+        ed.expand_active_box();
+        ed.expand_active_box();
+        ed.expand_active_box();
+        
+        ed.replace_chars(&['2']).unwrap();
+        
+        ed.shrink_box_to_fit(0);
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 2);
+        assert_eq!(ed.document.columns[0].get_char(0), '2');
+        assert_eq!(ed.document.columns[1].get_char(0), '-');
+        
+        // Fret 12 on E string (translates to E, len 1)
+        ed.replace_chars(&['1', '2']).unwrap();
+        
+        ed.shrink_box_to_fit(0);
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 2);
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[1].get_char(0), '2');
+        
+        // Fret 1 on E string (translates to F, len 1)
+        ed.clear_box();
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 1);
+        
+        ed.expand_active_box();
+        ed.expand_active_box();
+        
+        ed.replace_chars(&['1']).unwrap();
+        
+        ed.shrink_box_to_fit(0);
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 1);
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
     }
 }
