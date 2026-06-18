@@ -321,6 +321,16 @@ impl Editor {
         // If the cursor is on a '-', replace it instead of inserting
         if self.document.columns[col].get_char(string) == '-' {
             self.document.columns[col].set_char(string, c);
+            
+            let (_, box_end) = self.document.box_range(col);
+            if col + 1 == box_end {
+                // We replaced the last column of the box.
+                // Insert an empty column to keep the box open and cursor inside it.
+                let mut new_col = TabColumn::new();
+                new_col.is_box_start = false;
+                self.document.columns.insert(col + 1, new_col);
+            }
+            
             self.cursor.col += 1;
             return Ok(());
         }
@@ -678,34 +688,29 @@ mod tests {
         ed.cursor.string = 0;
         
         // Initial: [ - ] (size 1)
-        // Insert '1' -> replaces '-'
+        // Insert '1' -> replaces '-' and inserts new '-' at 1
         ed.insert_char_in_box('1').unwrap();
         assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[1].get_char(0), '-');
         assert_eq!(ed.cursor.col, 1);
         
         let (s, e) = ed.document.box_range(0);
-        assert_eq!(e - s, 1); // Box 0 is still size 1
+        assert_eq!(e - s, 2); // Box 0 expanded to size 2
         
-        // Now cursor is at 1. Col 1 is '-'
-        // Insert '2' -> replaces '-'
+        // Insert '2' -> replaces '-' at 1 and inserts new '-' at 2
         ed.insert_char_in_box('2').unwrap();
         assert_eq!(ed.document.columns[1].get_char(0), '2');
+        assert_eq!(ed.document.columns[2].get_char(0), '-');
         assert_eq!(ed.cursor.col, 2);
         
-        // Now test insertion (not replacement)
-        // Go back to 1 (which has '2')
-        ed.cursor.col = 1;
-        ed.insert_char_in_box('3').unwrap();
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 3); // Box 0 expanded to size 3
         
-        // Columns should be: Col 0: '1', Col 1: '3', Col 2: '2'
-        assert_eq!(ed.document.columns[0].get_char(0), '1');
-        assert_eq!(ed.document.columns[1].get_char(0), '3');
-        assert_eq!(ed.document.columns[2].get_char(0), '2');
-        assert_eq!(ed.cursor.col, 2);
-        
-        let (s, e) = ed.document.box_range(1);
-        assert_eq!(s, 1);
-        assert_eq!(e, 3); // Box 1 expanded to size 2 (cols 1, 2)
+        // Exit Insert Mode (simulated by calling shrink_box_to_fit)
+        ed.shrink_box_to_fit(0);
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 2); // Box 0 shrunk to size 2 (content "12")
+        assert_eq!(ed.cursor.col, 1); // Cursor adjusted to 1
     }
 
     #[test]
