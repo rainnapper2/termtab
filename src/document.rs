@@ -1,5 +1,8 @@
 use serde::{Serialize, Deserialize};
 
+pub const DEFAULT_MEASURE_LEN: usize = 16;
+pub const DEFAULT_BOX_LEN: usize = 2;
+
 use std::collections::BTreeMap;
 use serde::{Deserializer};
 
@@ -45,6 +48,8 @@ pub struct TabColumn {
     pub strings: BTreeMap<usize, char>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub annotation: Option<String>,
+    #[serde(default)]
+    pub is_box_start: bool,
 }
 
 impl TabColumn {
@@ -52,6 +57,7 @@ impl TabColumn {
         Self {
             strings: BTreeMap::new(),
             annotation: None,
+            is_box_start: false,
         }
     }
 
@@ -63,6 +69,7 @@ impl TabColumn {
         Self {
             strings,
             annotation: None,
+            is_box_start: false,
         }
     }
 
@@ -108,11 +115,17 @@ pub struct TabDocument {
 impl TabDocument {
     pub fn new(tuning: Vec<char>) -> Self {
         let num_strings = tuning.len();
-        // Start with 4 measures of 15 empty columns each
+        // Start with 4 measures of 16 empty columns each
         let mut columns = Vec::new();
+        let m_len = DEFAULT_MEASURE_LEN;
+        let box_len = DEFAULT_BOX_LEN;
         for i in 0..4 {
-            for _ in 0..15 {
-                columns.push(TabColumn::new());
+            for j in 0..m_len {
+                let mut col = TabColumn::new();
+                if j % box_len == 0 {
+                    col.is_box_start = true;
+                }
+                columns.push(col);
             }
             if i == 3 {
                 // Last measure ends with a double barline
@@ -125,10 +138,23 @@ impl TabDocument {
         
         Self {
             columns,
-            // Configurable tuning dynamically parsed
             tuning,
             clipboard: Vec::new(),
         }
+    }
+
+    pub fn append_measure(&mut self) {
+        let num_strings = self.tuning.len();
+        let m_len = DEFAULT_MEASURE_LEN;
+        let box_len = DEFAULT_BOX_LEN;
+        for j in 0..m_len {
+            let mut col = TabColumn::new();
+            if j % box_len == 0 {
+                col.is_box_start = true;
+            }
+            self.columns.push(col);
+        }
+        self.columns.push(TabColumn::barline(num_strings));
     }
 
     pub fn calculate_chunks(&self, wrap_width: usize) -> Vec<std::ops::Range<usize>> {
@@ -206,19 +232,33 @@ impl TabDocument {
         if self.columns[col].is_barline(num_strings) {
             return (col, col + 1);
         }
-        let m_start = self.measure_start_col(col);
-        let offset = col - m_start;
-        let box_idx = offset / 3;
-        let box_start = m_start + box_idx * 3;
         
-        let mut box_end = box_start + 3;
-        for i in box_start..box_end {
-            if i < self.columns.len() && self.columns[i].is_barline(num_strings) {
-                box_end = i;
+        // Find start
+        let mut start = col;
+        while start > 0 {
+            if self.columns[start].is_barline(num_strings) {
+                start += 1;
                 break;
             }
+            if self.columns[start].is_box_start {
+                break;
+            }
+            start -= 1;
         }
-        (box_start, box_end.min(self.columns.len()))
+        
+        // Find end
+        let mut end = col + 1;
+        while end < self.columns.len() {
+            if self.columns[end].is_barline(num_strings) {
+                break;
+            }
+            if self.columns[end].is_box_start {
+                break;
+            }
+            end += 1;
+        }
+        
+        (start, end)
     }
 
     pub fn dump_to_string(&self, wrap_width: usize) -> String {
@@ -348,16 +388,16 @@ mod tests {
     #[test]
     fn test_box_range() {
         let doc = TabDocument::default();
-        assert_eq!(doc.box_range(0), (0, 3));
-        assert_eq!(doc.box_range(1), (0, 3));
-        assert_eq!(doc.box_range(2), (0, 3));
-        assert_eq!(doc.box_range(3), (3, 6));
-        assert_eq!(doc.box_range(12), (12, 15));
-        assert_eq!(doc.box_range(14), (12, 15));
-        assert_eq!(doc.box_range(15), (15, 16));
-        assert_eq!(doc.box_range(16), (16, 19));
-        assert_eq!(doc.box_range(30), (28, 31));
-        assert_eq!(doc.box_range(31), (31, 32));
+        assert_eq!(doc.box_range(0), (0, 2));
+        assert_eq!(doc.box_range(1), (0, 2));
+        assert_eq!(doc.box_range(2), (2, 4));
+        assert_eq!(doc.box_range(3), (2, 4));
+        assert_eq!(doc.box_range(14), (14, 16));
+        assert_eq!(doc.box_range(15), (14, 16));
+        assert_eq!(doc.box_range(16), (16, 17)); // barline
+        assert_eq!(doc.box_range(17), (17, 19)); // M2 start
+        assert_eq!(doc.box_range(32), (31, 33)); // M2 end
+        assert_eq!(doc.box_range(33), (33, 34)); // barline
     }
 
     #[test]
@@ -365,18 +405,18 @@ mod tests {
         let doc = TabDocument::default();
         assert_eq!(doc.measure_start_col(0), 0);
         assert_eq!(doc.measure_start_col(5), 0);
-        assert_eq!(doc.measure_start_col(14), 0);
         assert_eq!(doc.measure_start_col(15), 0);
-        assert_eq!(doc.measure_start_col(16), 16);
-        assert_eq!(doc.measure_start_col(20), 16);
-        assert_eq!(doc.measure_start_col(31), 16);
+        assert_eq!(doc.measure_start_col(16), 0); // barline
+        assert_eq!(doc.measure_start_col(17), 17); // M2 start
+        assert_eq!(doc.measure_start_col(20), 17);
+        assert_eq!(doc.measure_start_col(33), 17); // barline
     }
 
     #[test]
     fn test_dump_to_string() {
         let doc = TabDocument::default();
         let dump = doc.dump_to_string(100);
-        assert!(dump.contains("e|-------------------|-------------------|-------------------|-------------------||"));
-        assert!(dump.contains("B|-------------------|-------------------|-------------------|-------------------||"));
+        assert!(dump.contains("e|-----------------------|-----------------------|-----------------------|-----------------------||"));
+        assert!(dump.contains("B|-----------------------|-----------------------|-----------------------|-----------------------||"));
     }
 }

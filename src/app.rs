@@ -202,6 +202,14 @@ impl App {
                 self.count_buffer.clear();
                 self.editor.delete_box();
             }
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                self.count_buffer.clear();
+                self.editor.expand_active_box();
+            }
+            KeyCode::Char('-') => {
+                self.count_buffer.clear();
+                self.editor.shrink_active_box();
+            }
             KeyCode::Char('x') => {
                 self.count_buffer.clear();
                 self.editor.clear_box();
@@ -261,8 +269,9 @@ impl App {
                 // Buffer the character
                 buffer.push(c);
                 
-                // Commit automatically when we reach 3 characters
-                if buffer.len() >= 3 {
+                let (start, end) = self.editor.document.box_range(self.editor.cursor.col);
+                let box_size = end - start;
+                if buffer.len() >= box_size {
                     self.commit_replace(&buffer);
                     self.mode = Mode::Normal;
                 } else {

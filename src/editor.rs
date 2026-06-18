@@ -1,4 +1,4 @@
-use crate::document::{TabColumn, TabDocument, Cursor};
+use crate::document::{TabColumn, TabDocument, Cursor, DEFAULT_MEASURE_LEN, DEFAULT_BOX_LEN};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
@@ -47,7 +47,7 @@ impl Editor {
         let num_strings = self.document.tuning.len();
         if direction > 0 {
             if col >= self.document.columns.len() {
-                return col + 3;
+                return col + DEFAULT_BOX_LEN;
             }
             if self.document.columns[col].is_barline(num_strings) {
                 col + 1
@@ -77,7 +77,8 @@ impl Editor {
                         0
                     }
                 } else {
-                    box_start.saturating_sub(3)
+                    let (prev_box_start, _) = self.document.box_range(box_start - 1);
+                    prev_box_start
                 }
             }
         }
@@ -97,11 +98,7 @@ impl Editor {
 
         // Ensure the document expands if we move past the end
         while new_col >= self.document.columns.len() {
-            let num_strings = self.document.tuning.len();
-            for _ in 0..15 {
-                self.document.columns.push(TabColumn::new());
-            }
-            self.document.columns.push(TabColumn::barline(num_strings));
+            self.document.append_measure();
         }
 
         self.cursor.col = new_col;
@@ -134,11 +131,7 @@ impl Editor {
         }
 
         while new_col >= self.document.columns.len() {
-            let num_strings = self.document.tuning.len();
-            for _ in 0..15 {
-                self.document.columns.push(TabColumn::new());
-            }
-            self.document.columns.push(TabColumn::barline(num_strings));
+            self.document.append_measure();
         }
 
         self.cursor.col = new_col;
@@ -161,10 +154,7 @@ impl Editor {
             if self.document.columns[i].is_barline(num_strings) {
                 self.cursor.col = i + 1;
                 if self.cursor.col >= self.document.columns.len() {
-                    for _ in 0..15 {
-                        self.document.columns.push(TabColumn::new());
-                    }
-                    self.document.columns.push(TabColumn::barline(num_strings));
+                    self.document.append_measure();
                 }
                 return;
             }
@@ -240,8 +230,13 @@ impl Editor {
     pub fn insert_box(&mut self) {
         self.save_state();
         let (box_start, _) = self.document.box_range(self.cursor.col);
-        for _ in 0..3 {
-            self.document.columns.insert(box_start, TabColumn::new());
+        
+        let mut first = TabColumn::new();
+        first.is_box_start = true;
+        self.document.columns.insert(box_start, first);
+        
+        for _ in 1..2 { // default box size 2
+            self.document.columns.insert(box_start + 1, TabColumn::new());
         }
         self.cursor.col = box_start;
     }
@@ -260,7 +255,9 @@ impl Editor {
 
         // Ensure there's always at least one column
         if self.document.columns.is_empty() {
-            self.document.columns.push(TabColumn::new());
+            let mut col = TabColumn::new();
+            col.is_box_start = true;
+            self.document.columns.push(col);
         }
         if self.cursor.col >= self.document.columns.len() {
             self.cursor.col = self.document.columns.len() - 1;
@@ -281,6 +278,35 @@ impl Editor {
         let (box_start, box_end) = self.document.box_range(col);
         for c in &mut self.document.columns[box_start..box_end] {
             c.clear();
+        }
+    }
+
+    pub fn expand_active_box(&mut self) {
+        let col = self.cursor.col;
+        let num_strings = self.document.tuning.len();
+        if self.document.columns[col].is_barline(num_strings) {
+            return;
+        }
+        self.save_state();
+        let (_, box_end) = self.document.box_range(col);
+        self.document.columns.insert(box_end, TabColumn::new());
+    }
+
+    pub fn shrink_active_box(&mut self) {
+        let col = self.cursor.col;
+        let num_strings = self.document.tuning.len();
+        if self.document.columns[col].is_barline(num_strings) {
+            return;
+        }
+        let (box_start, box_end) = self.document.box_range(col);
+        let size = box_end - box_start;
+        if size <= 1 {
+            return;
+        }
+        self.save_state();
+        self.document.columns.remove(box_end - 1);
+        if self.cursor.col >= box_end - 1 {
+            self.cursor.col = box_end - 2;
         }
     }
 
@@ -349,7 +375,7 @@ impl Editor {
         self.document.columns.extend(tail);
         
         // 2. Ripple overflow
-        let m_len = 15;
+        let m_len = DEFAULT_MEASURE_LEN;
         let mut current_col = col;
         
         loop {
@@ -418,16 +444,16 @@ mod tests {
     #[test]
     fn test_editor_insert_delete_box() {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
-        assert_eq!(ed.document.columns.len(), 65); // 4 measures * 15 cols + 5 barlines = 65
+        assert_eq!(ed.document.columns.len(), 69); // 4 measures * 16 cols + 5 barlines = 69
         ed.insert_box();
-        assert_eq!(ed.document.columns.len(), 68);
+        assert_eq!(ed.document.columns.len(), 71);
         ed.undo();
-        assert_eq!(ed.document.columns.len(), 65);
+        assert_eq!(ed.document.columns.len(), 69);
         ed.redo();
-        assert_eq!(ed.document.columns.len(), 68);
+        assert_eq!(ed.document.columns.len(), 71);
 
         ed.delete_box();
-        assert_eq!(ed.document.columns.len(), 65);
+        assert_eq!(ed.document.columns.len(), 69);
     }
 
     #[test]
@@ -435,35 +461,35 @@ mod tests {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
         ed.cursor.col = 0;
         
-        // Move right: should go to col 3 (start of Box 1)
+        // Move right: should go to col 2 (start of Box 1)
         ed.move_cursor(1, 0);
-        assert_eq!(ed.cursor.col, 3);
+        assert_eq!(ed.cursor.col, 2);
         
-        // Move right again: should go to col 6 (start of Box 2)
+        // Move right again: should go to col 4 (start of Box 2)
         ed.move_cursor(1, 0);
-        assert_eq!(ed.cursor.col, 6);
+        assert_eq!(ed.cursor.col, 4);
         
-        // Move left: should go to col 3
+        // Move left: should go to col 2
         ed.move_cursor(-1, 0);
-        assert_eq!(ed.cursor.col, 3);
+        assert_eq!(ed.cursor.col, 2);
 
-        // Move to end of measure 1 (col 12 is Box 4 start)
-        ed.cursor.col = 12;
-        // Move right: should go to col 15 (barline)
-        ed.move_cursor(1, 0);
-        assert_eq!(ed.cursor.col, 15);
-        
-        // Move right again: should go to col 16 (start of Measure 2 Box 0)
+        // Move to end of measure 1 (col 14 is Box 7 start)
+        ed.cursor.col = 14;
+        // Move right: should go to col 16 (barline)
         ed.move_cursor(1, 0);
         assert_eq!(ed.cursor.col, 16);
+        
+        // Move right again: should go to col 17 (start of Measure 2 Box 0)
+        ed.move_cursor(1, 0);
+        assert_eq!(ed.cursor.col, 17);
 
-        // Move left from 16: should go to 15 (barline)
+        // Move left from 17: should go to 16 (barline)
         ed.move_cursor(-1, 0);
-        assert_eq!(ed.cursor.col, 15);
+        assert_eq!(ed.cursor.col, 16);
 
-        // Move left from 15: should go to 12 (start of Box 4 in Measure 1)
+        // Move left from 16: should go to 14 (start of Box 7 in Measure 1)
         ed.move_cursor(-1, 0);
-        assert_eq!(ed.cursor.col, 12);
+        assert_eq!(ed.cursor.col, 14);
     }
 
     #[test]
@@ -495,7 +521,7 @@ mod tests {
         ed.cursor.col = 6;
         ed.paste_columns();
         
-        // M1: cols 0..5 (original) + clip (3) + cols 6..11 (original) = 15 cols
+        // M1: cols 0..5 (original) + clip (3) + cols 6..12 (original) = 16 cols
         assert_eq!(ed.document.columns[0].get_char(0), '9');
         assert_eq!(ed.document.columns[1].get_char(0), '9');
         assert_eq!(ed.document.columns[2].get_char(0), '9');
@@ -503,13 +529,13 @@ mod tests {
         assert_eq!(ed.document.columns[6].get_char(0), '9');
         assert_eq!(ed.document.columns[7].get_char(0), '9');
         assert_eq!(ed.document.columns[8].get_char(0), '9');
-        assert_eq!(ed.document.columns[15].get_char(0), '|');
+        assert_eq!(ed.document.columns[16].get_char(0), '|');
         
-        // M2: cols 12..14 (original M1 overflow, 3 cols) + 12 cols of original M2 = 15 cols
-        assert_eq!(ed.document.columns[16].get_char(0), '-');
-        assert_eq!(ed.document.columns[31].get_char(0), '|');
+        // M2: cols 13..15 (original M1 overflow, 3 cols) + 13 cols of original M2 = 16 cols
+        assert_eq!(ed.document.columns[17].get_char(0), '-');
+        assert_eq!(ed.document.columns[33].get_char(0), '|');
         
-        assert_eq!(ed.document.columns.len(), 81);
+        assert_eq!(ed.document.columns.len(), 86);
     }
 
     #[test]
@@ -521,20 +547,20 @@ mod tests {
         
         ed.copy_columns(0, 2);
         
-        ed.cursor.col = 16; // Start of M2
+        ed.cursor.col = 17; // Start of M2
         ed.paste_columns();
         
-        // M2: clip (3) + 12 empty of M2 = 15 cols
-        assert_eq!(ed.document.columns[16].get_char(0), '9');
+        // M2: clip (3) + 13 empty of M2 = 16 cols
         assert_eq!(ed.document.columns[17].get_char(0), '9');
         assert_eq!(ed.document.columns[18].get_char(0), '9');
-        assert_eq!(ed.document.columns[31].get_char(0), '|');
+        assert_eq!(ed.document.columns[19].get_char(0), '9');
+        assert_eq!(ed.document.columns[33].get_char(0), '|');
         
-        // M3: 3 empty (overflow M2) + 12 empty M3 = 15 cols
-        assert_eq!(ed.document.columns[32].get_char(0), '-');
-        assert_eq!(ed.document.columns[47].get_char(0), '|');
+        // M3: 3 empty (overflow M2) + 13 empty M3 = 16 cols
+        assert_eq!(ed.document.columns[34].get_char(0), '-');
+        assert_eq!(ed.document.columns[50].get_char(0), '|');
         
-        assert_eq!(ed.document.columns.len(), 81);
+        assert_eq!(ed.document.columns.len(), 86);
     }
 
     #[test]
@@ -548,8 +574,8 @@ mod tests {
         ed.clear_box();
         assert_eq!(ed.document.columns[0].get_char(0), '-');
         assert_eq!(ed.document.columns[1].get_char(0), '-');
-        assert_eq!(ed.document.columns[2].get_char(0), '-');
-        assert_eq!(ed.document.columns.len(), 65);
+        assert_eq!(ed.document.columns[2].get_char(0), '9'); // Col 2 is not cleared (Box 1)
+        assert_eq!(ed.document.columns.len(), 69);
     }
 
     #[test]
@@ -563,11 +589,38 @@ mod tests {
         ed.move_cursor_cols(2, 0);
         assert_eq!(ed.cursor.col, 3);
         
-        ed.cursor.col = 14;
+        ed.cursor.col = 15;
         ed.move_cursor_cols(1, 0);
-        assert_eq!(ed.cursor.col, 16);
+        assert_eq!(ed.cursor.col, 17);
         
         ed.move_cursor_cols(-1, 0);
-        assert_eq!(ed.cursor.col, 14);
+        assert_eq!(ed.cursor.col, 15);
+    }
+
+    #[test]
+    fn test_editor_expand_shrink_box() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 2);
+        
+        ed.expand_active_box();
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 3);
+        assert_eq!(ed.document.columns.len(), 70);
+        
+        ed.shrink_active_box();
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 2);
+        assert_eq!(ed.document.columns.len(), 69);
+        
+        ed.shrink_active_box();
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 1);
+        
+        ed.shrink_active_box();
+        let (s, e) = ed.document.box_range(0);
+        assert_eq!(e - s, 1);
     }
 }
