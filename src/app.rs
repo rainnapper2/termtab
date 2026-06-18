@@ -140,7 +140,7 @@ impl App {
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 self.count_buffer.push(c);
             }
-            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Char('e') | KeyCode::Char('b') | KeyCode::Char('[') | KeyCode::Char(']') | KeyCode::Char('H') | KeyCode::Char('L') => {
+            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Char('e') | KeyCode::Char('b') | KeyCode::Char('[') | KeyCode::Char(']') | KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
                 let count = if self.count_buffer.is_empty() {
                     1
                 } else {
@@ -149,10 +149,10 @@ impl App {
                 self.count_buffer.clear();
 
                 match key.code {
-                    KeyCode::Char('h') => self.editor.move_cursor(-(count as isize), 0),
-                    KeyCode::Char('l') => self.editor.move_cursor(count as isize, 0),
-                    KeyCode::Char('j') => self.editor.move_cursor(0, count as isize),
-                    KeyCode::Char('k') => self.editor.move_cursor(0, -(count as isize)),
+                    KeyCode::Char('h') | KeyCode::Left => self.editor.move_cursor(-(count as isize), 0),
+                    KeyCode::Char('l') | KeyCode::Right => self.editor.move_cursor(count as isize, 0),
+                    KeyCode::Char('j') | KeyCode::Down => self.editor.move_cursor(0, count as isize),
+                    KeyCode::Char('k') | KeyCode::Up => self.editor.move_cursor(0, -(count as isize)),
                     KeyCode::Char('w') => { for _ in 0..count { self.editor.jump_next_measure(); } }
                     KeyCode::Char('b') => { for _ in 0..count { self.editor.jump_prev_measure(); } }
                     KeyCode::Char('e') => { for _ in 0..count { self.editor.jump_end_measure(); } }
@@ -336,6 +336,30 @@ impl App {
                 
                 if !self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
                     self.editor.replace_chars(&['-']).unwrap();
+                }
+            }
+            KeyCode::Up => {
+                self.editor.move_cursor(0, -1);
+            }
+            KeyCode::Down => {
+                self.editor.move_cursor(0, 1);
+            }
+            KeyCode::Left => {
+                let tuning_len = self.editor.document.tuning.len();
+                if self.editor.cursor.col > 0 {
+                    self.editor.move_cursor(-1, 0);
+                }
+                while self.editor.cursor.col > 0 && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
+                    self.editor.move_cursor(-1, 0);
+                }
+            }
+            KeyCode::Right => {
+                let tuning_len = self.editor.document.tuning.len();
+                self.editor.move_cursor(1, 0);
+                while self.editor.cursor.col < self.editor.document.columns.len() 
+                    && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
+                {
+                    self.editor.move_cursor(1, 0);
                 }
             }
             KeyCode::Char(c) => {
