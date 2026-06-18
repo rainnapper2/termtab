@@ -533,4 +533,66 @@ mod tests {
         assert!(e_line_str.starts_with("e|--E--"), "Actual e: {}", e_line_str);
         assert!(a_line_str.starts_with("A|C-/C-/C-/C-"), "Actual A: {}", a_line_str);
     }
+
+    #[test]
+    fn test_render_note_mode_overlapping_slides() {
+        let ed = Editor::new(vec!['E', 'A', 'D', 'G']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.col = 0;
+        app.editor.expand_active_box(); // size 2
+        app.editor.expand_active_box(); // size 3
+        app.editor.expand_active_box(); // size 4
+        app.editor.expand_active_box(); // size 5
+        app.editor.expand_active_box(); // size 6
+        app.editor.expand_active_box(); // size 7
+        
+        app.editor.cursor.string = 0; // E string
+        app.editor.replace_chars(&['1', '2', '/', '1', '2', '/', '1']).unwrap();
+        
+        app.editor.cursor.string = 1; // A string
+        app.editor.replace_chars(&['1', '/', '2', '/', '1']).unwrap();
+        
+        app.editor.adjust_box_to_fit(0);
+        
+        app.note_mode = true;
+        app.editor.transform_to_note_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("E|")
+        }).unwrap();
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let a_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("A|")
+        }).unwrap();
+        let a_line_str: String = a_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        assert!(e_line_str.starts_with("E|E--/E--/F"), "Actual E: {}", e_line_str);
+        assert!(a_line_str.starts_with("A|A#/B/A#"), "Actual A: {}", a_line_str);
+        
+        app.note_mode = false;
+        app.editor.transform_to_fret_mode();
+        
+        let (text, _) = render_tab_document(&app, 80);
+        
+        let e_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("E|")
+        }).unwrap();
+        let e_line_str: String = e_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        let a_line = text.lines.iter().find(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s.starts_with("A|")
+        }).unwrap();
+        let a_line_str: String = a_line.spans.iter().map(|s| s.content.as_ref()).collect();
+        
+        assert!(e_line_str.starts_with("E|12/12/1"), "Actual E after off: {}", e_line_str);
+        assert!(a_line_str.starts_with("A|1/2/1"), "Actual A after off: {}", a_line_str);
+    }
 }

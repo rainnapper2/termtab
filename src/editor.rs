@@ -856,6 +856,60 @@ impl Editor {
                 }
                 
                 if max_group_len > 0 {
+                    let mut shifted_strings = vec![false; num_strings];
+                    let mut shift_needed = false;
+                    
+                    for string_idx in 0..num_strings {
+                        if self.document.columns[i].get_char(string_idx).is_ascii_digit() {
+                            let is_start = i == box_start || !self.document.columns[i - 1].get_char(string_idx).is_ascii_digit();
+                            if is_start {
+                                let mut len = 1;
+                                while i + len < box_end && self.document.columns[i + len].get_char(string_idx).is_ascii_digit() {
+                                    len += 1;
+                                }
+                                let mut fret_str = String::new();
+                                for k in 0..len {
+                                    fret_str.push(self.document.columns[i + k].get_char(string_idx));
+                                }
+                                if let Ok(fret) = fret_str.parse::<u32>() {
+                                    let tuning_char = self.document.tuning[string_idx];
+                                    let key = self.document.get_key_signature_at(box_start);
+                                    let note = fret_to_note(tuning_char, fret, key.as_deref());
+                                    if note.len() > 1 {
+                                        let write_col = i + len;
+                                        if write_col < box_end && self.document.columns[write_col].get_char(string_idx) != '-' {
+                                            shifted_strings[string_idx] = true;
+                                            shift_needed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if shift_needed {
+                        let insert_pos = i + max_group_len;
+                        let mut new_col = TabColumn::new();
+                        new_col.is_box_start = false;
+                        self.document.columns.insert(insert_pos, new_col);
+                        box_end += 1;
+                        
+                        for string_idx in 0..num_strings {
+                            if shifted_strings[string_idx] {
+                                let mut len = 1;
+                                while i + len < box_end && self.document.columns[i + len].get_char(string_idx).is_ascii_digit() {
+                                    len += 1;
+                                }
+                                let write_col = i + len;
+                                for k in (write_col..insert_pos).rev() {
+                                    let c = self.document.columns[k].get_char(string_idx);
+                                    self.document.columns[k + 1].set_char(string_idx, c);
+                                }
+                                self.document.columns[write_col].set_char(string_idx, '-');
+                            }
+                        }
+                    }
+                    
                     for string_idx in 0..num_strings {
                         if self.document.columns[i].get_char(string_idx).is_ascii_digit() {
                             let is_start = i == box_start || !self.document.columns[i - 1].get_char(string_idx).is_ascii_digit();
@@ -885,6 +939,36 @@ impl Editor {
                 i += 1;
             }
             col = box_end;
+        }
+    }
+
+    fn compress_box(&mut self, box_start: usize, box_end: &mut usize) {
+        let num_strings = self.document.tuning.len();
+        let mut col_idx = box_start;
+        while col_idx + 1 < *box_end {
+            let mut complementary = true;
+            for string_idx in 0..num_strings {
+                let c1 = self.document.columns[col_idx].get_char(string_idx);
+                let c2 = self.document.columns[col_idx + 1].get_char(string_idx);
+                if c1 != '-' && c2 != '-' {
+                    complementary = false;
+                    break;
+                }
+            }
+            
+            if complementary {
+                for string_idx in 0..num_strings {
+                    let c1 = self.document.columns[col_idx].get_char(string_idx);
+                    let c2 = self.document.columns[col_idx + 1].get_char(string_idx);
+                    if c1 == '-' {
+                        self.document.columns[col_idx].set_char(string_idx, c2);
+                    }
+                }
+                self.document.columns.remove(col_idx + 1);
+                *box_end -= 1;
+            } else {
+                col_idx += 1;
+            }
         }
     }
 
@@ -928,6 +1012,8 @@ impl Editor {
                     col_idx += 1;
                 }
             }
+            
+            self.compress_box(box_start, &mut box_end);
             
             let change = self.adjust_box_to_fit(box_start);
             let new_box_end = (box_end as isize + change) as usize;
