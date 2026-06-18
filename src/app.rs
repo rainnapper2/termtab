@@ -305,7 +305,7 @@ impl App {
             }
             KeyCode::Enter => {
                 let (_, box_end) = self.editor.document.box_range(self.editor.cursor.col);
-                self.editor.cursor.col = box_end;
+                self.editor.jump_to_col(box_end);
                 let tuning_len = self.editor.document.tuning.len();
                 while self.editor.cursor.col < self.editor.document.columns.len() 
                     && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
@@ -487,9 +487,11 @@ impl App {
     fn handle_insert(&mut self, key: event::KeyEvent) {
         match key.code {
             KeyCode::Esc => {
+                self.editor.shrink_box_to_fit(self.editor.cursor.col);
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
+                self.editor.shrink_box_to_fit(self.editor.cursor.col);
                 self.mode = Mode::Normal;
             }
             KeyCode::Backspace => {
