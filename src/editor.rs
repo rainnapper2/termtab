@@ -292,6 +292,34 @@ impl Editor {
         self.cursor.col = prev_col;
     }
 
+    pub fn delete_char_at_cursor(&mut self) {
+        let col = self.cursor.col;
+        let num_strings = self.document.tuning.len();
+        if col >= self.document.columns.len() { return; }
+        if self.document.columns[col].is_barline(num_strings) {
+            return; // Don't delete barlines
+        }
+        
+        self.save_state();
+        let was_start = self.document.columns[col].is_box_start;
+        self.document.columns.remove(col);
+        
+        if was_start && col < self.document.columns.len() {
+            if !self.document.columns[col].is_barline(num_strings) {
+                self.document.columns[col].is_box_start = true;
+            }
+        }
+        
+        if self.cursor.col >= self.document.columns.len() {
+            self.cursor.col = self.document.columns.len() - 1;
+        }
+        if self.document.columns[self.cursor.col].is_barline(num_strings) {
+            if self.cursor.col > 0 {
+                self.cursor.col -= 1;
+            }
+        }
+    }
+
     pub fn replace_chars(&mut self, chars: &[char]) {
         self.save_state();
         
@@ -614,5 +642,23 @@ mod tests {
         
         let (s, e) = ed.document.box_range(0);
         assert_eq!(e - s, 2); // Box 0 is now size 2
+    }
+
+    #[test]
+    fn test_editor_delete_char() {
+        let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        ed.cursor.col = 0;
+        ed.cursor.string = 0;
+        ed.replace_chars(&['1', '2', '3']);
+        
+        ed.cursor.col = 1;
+        ed.delete_char_at_cursor();
+        
+        assert_eq!(ed.document.columns[0].get_char(0), '1');
+        assert_eq!(ed.document.columns[1].get_char(0), '3');
+        assert_eq!(ed.cursor.col, 1);
+        
+        ed.delete_char_at_cursor();
+        assert_eq!(ed.document.columns[1].get_char(0), '-');
     }
 }

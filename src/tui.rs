@@ -104,6 +104,8 @@ pub fn draw(f: &mut Frame, app: &App) {
             Line::from("  y, d, p      Yank (copy), delete (cut), paste selected columns"),
             Line::from("  >, <         Insert or delete active box"),
             Line::from("  +, -         Expand or shrink active box (variable length)"),
+            Line::from("  x            Delete character at cursor"),
+            Line::from("  d            Clear active box content"),
             Line::from("  A            Add text annotation (e.g., Key: C Major)"),
             Line::from("  n            Toggle diatonic note translation (fret numbers -> notes)"),
             Line::from("  u, Ctrl+R    Undo, Redo"),
