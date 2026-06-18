@@ -557,11 +557,12 @@ impl App {
             }
             KeyCode::Enter => {
                 let old_col = self.editor.cursor.col;
-                self.editor.adjust_box_to_fit(self.editor.cursor.col);
-                if self.editor.cursor.col == old_col && self.editor.cursor.col > 0 {
-                    self.editor.cursor.col -= 1;
+                self.editor.move_box_right();
+                if self.editor.cursor.col == old_col {
+                    // At the end of the document, append a measure
+                    self.editor.document.append_measure();
+                    self.editor.move_box_right();
                 }
-                self.mode = Mode::Normal;
             }
             KeyCode::Backspace => {
                 self.editor.delete_char_before_cursor();
@@ -723,5 +724,57 @@ mod tests {
         app.handle_normal(press_key(KeyCode::Char('2')));
         app.handle_normal(press_key(KeyCode::Char('L')));
         assert_eq!(app.editor.cursor.col, 2);
+    }
+
+    #[test]
+    fn test_app_insert_enter() {
+        let ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
+        let mut app = App::new(ed, "test.json".to_string());
+        
+        app.editor.cursor.col = 0;
+        app.mode = Mode::Insert;
+        
+        app.editor.expand_active_box();
+        app.editor.expand_active_box();
+        app.editor.replace_chars(&['1']).unwrap();
+        
+        app.editor.cursor.col = 2;
+        
+        app.handle_insert(press_key(KeyCode::Enter));
+        
+        assert_eq!(app.mode, Mode::Insert);
+        assert_eq!(app.editor.cursor.col, 1);
+        let (s, e) = app.editor.document.box_range(0);
+        assert_eq!(e - s, 1);
+        assert_eq!(app.editor.document.columns[0].get_char(0), '1');
+        
+        for _ in 0..6 {
+            app.handle_insert(press_key(KeyCode::Enter));
+        }
+        assert_eq!(app.editor.cursor.col, 7);
+        assert_eq!(app.mode, Mode::Insert);
+        
+        app.handle_insert(press_key(KeyCode::Enter));
+        assert_eq!(app.editor.cursor.col, 9);
+        assert_eq!(app.mode, Mode::Insert);
+        
+        let mut last_box_start = app.editor.document.columns.len() - 1;
+        let tuning_len = app.editor.document.tuning.len();
+        while last_box_start > 0 {
+            if !app.editor.document.columns[last_box_start].is_barline(tuning_len) 
+               && app.editor.document.columns[last_box_start].is_box_start {
+                break;
+            }
+            last_box_start -= 1;
+        }
+        
+        app.editor.cursor.col = last_box_start;
+        let old_len = app.editor.document.columns.len();
+        
+        app.handle_insert(press_key(KeyCode::Enter));
+        
+        assert_eq!(app.editor.document.columns.len(), old_len + 9);
+        assert_eq!(app.editor.cursor.col, old_len);
+        assert_eq!(app.mode, Mode::Insert);
     }
 }
