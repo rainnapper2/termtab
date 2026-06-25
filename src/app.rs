@@ -14,7 +14,8 @@ fn is_valid_continuous_replace_char(c: char) -> bool {
 pub enum Mode {
     Normal,
     Replace { buffer: String },
-    ContinuousReplace,
+    ContinuousReplace { start_col: usize },
+    Insert { start_col: usize },
     Prompt { buffer: String },
     Visual { start_col: usize },
     Command { buffer: String },
@@ -35,7 +36,7 @@ pub struct App {
 
 impl App {
     pub fn new(editor: Editor, filename: String) -> Self {
-        let saved_undo_len = editor.undo_stack.len();
+        let saved_undo_len = editor.version_controller.undo_stack.len();
         Self {
             editor,
             mode: Mode::Normal,
@@ -50,14 +51,37 @@ impl App {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.editor.undo_stack.len() != self.saved_undo_len
+        self.editor.version_controller.undo_stack.len() != self.saved_undo_len
+    }
+
+
+    fn move_cursor_vertical(&mut self, delta: isize, count: usize) {
+        let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+        let wrap_width = if width > 4 { (width - 4) as usize } else { 80 };
+        let num_strings = self.editor.document.tuning.len();
+
+        for _ in 0..count {
+            if delta > 0 {
+                if self.editor.cursor.string + 1 < num_strings {
+                    self.editor.move_cursor(0, 1);
+                } else if self.editor.jump_next_row(wrap_width) {
+                    self.editor.cursor.string = 0;
+                }
+            } else if delta < 0 {
+                if self.editor.cursor.string > 0 {
+                    self.editor.move_cursor(0, -1);
+                } else if self.editor.jump_prev_row(wrap_width) {
+                    self.editor.cursor.string = num_strings - 1;
+                }
+            }
+        }
     }
 
     fn save_file(&mut self) -> bool {
         match serde_json::to_string(&self.editor) {
             Ok(json) => match std::fs::write(&self.filename, json) {
                 Ok(_) => {
-                    self.saved_undo_len = self.editor.undo_stack.len();
+                    self.saved_undo_len = self.editor.version_controller.undo_stack.len();
                     self.error_msg = Some(format!("Saved {}", self.filename));
                     true
                 }
@@ -77,59 +101,68 @@ impl App {
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    let key_str = match key.code {
-                        KeyCode::Char(c) => c.to_string(),
-                        KeyCode::Esc => "<Esc>".to_string(),
-                        KeyCode::Enter => "<Enter>".to_string(),
-                        KeyCode::Backspace => "<Backspace>".to_string(),
-                        KeyCode::Tab => "<Tab>".to_string(),
-                        KeyCode::Left => "<Left>".to_string(),
-                        KeyCode::Right => "<Right>".to_string(),
-                        KeyCode::Up => "<Up>".to_string(),
-                        KeyCode::Down => "<Down>".to_string(),
-                        _ => format!("{:?}", key.code),
-                    };
-                    self.key_log.push_str(&key_str);
-                    if self.key_log.len() > 60 {
-                        let remove_len = self.key_log.len() - 60;
-                        self.key_log.drain(..remove_len);
-                    }
-
-                    self.error_msg = None; // Clear error on next keypress
-                    match &mut self.mode {
-                        Mode::Normal => self.handle_normal(key),
-                        Mode::Replace { buffer } => {
-                            let buf = buffer.clone();
-                            self.handle_replace(key, buf);
-                        }
-                        Mode::ContinuousReplace => {
-                            self.handle_continuous_replace(key);
-                        }
-                        Mode::Prompt { buffer } => {
-                            let buf = buffer.clone();
-                            self.handle_prompt(key, buf);
-                        }
-                        Mode::Visual { start_col } => {
-                            let start = *start_col;
-                            self.handle_visual(key, start);
-                        }
-                        Mode::Command { buffer } => {
-                            let buf = buffer.clone();
-                            self.handle_command(key, buf);
-                        }
-                        Mode::Help => {
-                            match key.code {
-                                event::KeyCode::Esc | event::KeyCode::Char('?') | event::KeyCode::Char('q') => {
-                                    self.mode = Mode::Normal;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                    self.handle_key(key);
                 }
             }
         }
         Ok(())
+    }
+
+    pub fn handle_key(&mut self, key: event::KeyEvent) {
+        let key_str = match key.code {
+            KeyCode::Char(c) => c.to_string(),
+            KeyCode::Esc => "<Esc>".to_string(),
+            KeyCode::Enter => "<Enter>".to_string(),
+            KeyCode::Backspace => "<Backspace>".to_string(),
+            KeyCode::Tab => "<Tab>".to_string(),
+            KeyCode::Left => "<Left>".to_string(),
+            KeyCode::Right => "<Right>".to_string(),
+            KeyCode::Up => "<Up>".to_string(),
+            KeyCode::Down => "<Down>".to_string(),
+            _ => format!("{:?}", key.code),
+        };
+        self.key_log.push_str(&key_str);
+        if self.key_log.len() > 60 {
+            let remove_len = self.key_log.len() - 60;
+            self.key_log.drain(..remove_len);
+        }
+
+        self.error_msg = None; // Clear error on next keypress
+        match &mut self.mode {
+            Mode::Normal => self.handle_normal(key),
+            Mode::Replace { buffer } => {
+                let buf = buffer.clone();
+                self.handle_replace(key, buf);
+            }
+            Mode::ContinuousReplace { start_col } => {
+                let sc = *start_col;
+                self.handle_continuous_replace(key, sc);
+            }
+            Mode::Prompt { buffer } => {
+                let buf = buffer.clone();
+                self.handle_prompt(key, buf);
+            }
+            Mode::Visual { start_col } => {
+                let start = *start_col;
+                self.handle_visual(key, start);
+            }
+            Mode::Command { buffer } => {
+                let buf = buffer.clone();
+                self.handle_command(key, buf);
+            }
+            Mode::Insert { start_col } => {
+                let sc = *start_col;
+                self.handle_insert(key, sc);
+            }
+            Mode::Help => {
+                match key.code {
+                    event::KeyCode::Esc | event::KeyCode::Char('?') | event::KeyCode::Char('q') => {
+                        self.mode = Mode::Normal;
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     fn handle_normal(&mut self, key: event::KeyEvent) {
@@ -148,8 +181,8 @@ impl App {
                 match key.code {
                     KeyCode::Char('h') | KeyCode::Left => self.editor.move_cursor(-(count as isize), 0),
                     KeyCode::Char('l') | KeyCode::Right => self.editor.move_cursor(count as isize, 0),
-                    KeyCode::Char('j') | KeyCode::Down => self.editor.move_cursor(0, count as isize),
-                    KeyCode::Char('k') | KeyCode::Up => self.editor.move_cursor(0, -(count as isize)),
+                    KeyCode::Char('j') | KeyCode::Down => self.move_cursor_vertical(1, count),
+                    KeyCode::Char('k') | KeyCode::Up => self.move_cursor_vertical(-1, count),
                     KeyCode::Char('w') => { for _ in 0..count { self.editor.jump_next_measure(); } }
                     KeyCode::Char('b') => { for _ in 0..count { self.editor.jump_prev_measure(); } }
                     KeyCode::Char('e') => { for _ in 0..count { self.editor.jump_end_measure(); } }
@@ -176,11 +209,20 @@ impl App {
             }
             KeyCode::Char('U') => {
                 self.count_buffer.clear();
-                self.editor.redo();
+                // Redo
+                if let Some(desc) = self.editor.redo() {
+                    self.error_msg = Some(format!("Redid: {}", desc));
+                } else {
+                    self.error_msg = None;
+                }
+            }
+            KeyCode::Char('i') | KeyCode::Char('I') => {
+                self.count_buffer.clear();
+                self.mode = Mode::Insert { start_col: self.editor.cursor.col };
             }
             KeyCode::Char('R') => {
                 self.count_buffer.clear();
-                self.mode = Mode::ContinuousReplace;
+                self.mode = Mode::ContinuousReplace { start_col: self.editor.cursor.col };
             }
             KeyCode::Char('A') => {
                 self.count_buffer.clear();
@@ -190,6 +232,11 @@ impl App {
                 self.count_buffer.clear();
                 self.note_mode = !self.note_mode;
             }
+            KeyCode::Char('x') => {
+                self.count_buffer.clear();
+                self.editor.delete_char();
+                self.editor.version_controller.commit("Delete character");
+            }
             KeyCode::Char('?') => {
                 self.count_buffer.clear();
                 self.mode = Mode::Help;
@@ -197,14 +244,21 @@ impl App {
             KeyCode::Char('>') => {
                 self.count_buffer.clear();
                 self.editor.insert_column();
+                self.editor.version_controller.commit("Insert column");
             }
             KeyCode::Char('<') => {
                 self.count_buffer.clear();
                 self.editor.delete_column();
+                self.editor.version_controller.commit("Delete column");
             }
             KeyCode::Char('u') => {
                 self.count_buffer.clear();
-                self.editor.undo();
+                // Undo
+                if let Some(desc) = self.editor.undo() {
+                    self.error_msg = Some(format!("Undid: {}", desc));
+                } else {
+                    self.error_msg = None;
+                }
             }
             KeyCode::Char('v') => {
                 self.count_buffer.clear();
@@ -213,6 +267,7 @@ impl App {
             KeyCode::Char('p') => {
                 self.count_buffer.clear();
                 self.editor.paste_columns();
+                self.editor.version_controller.commit("Paste columns");
             }
             _ => {
                 // Clear buffer on invalid command
@@ -227,13 +282,24 @@ impl App {
                 self.commit_replace(&buffer);
                 self.mode = Mode::Normal;
             }
+            KeyCode::Enter => {
+                self.commit_replace(&buffer);
+                let num_strings = self.editor.document.tuning.len();
+                if self.editor.cursor.string + 1 < num_strings {
+                    self.editor.cursor.string += 1;
+                    self.mode = Mode::Replace { buffer: String::new() };
+                } else {
+                    self.editor.cursor.string = 0;
+                    self.mode = Mode::Normal;
+                }
+            }
             KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('k') if !buffer.is_empty() => {
                 self.commit_replace(&buffer);
                 match key.code {
                     KeyCode::Char('h') => self.editor.move_cursor(-1, 0),
                     KeyCode::Char('l') => self.editor.move_cursor(1, 0),
-                    KeyCode::Char('j') => self.editor.move_cursor(0, 1),
-                    KeyCode::Char('k') => self.editor.move_cursor(0, -1),
+                    KeyCode::Char('j') => self.move_cursor_vertical(1, 1),
+                    KeyCode::Char('k') => self.move_cursor_vertical(-1, 1),
                     _ => {}
                 }
                 self.mode = Mode::Normal;
@@ -242,6 +308,8 @@ impl App {
                 if buffer.is_empty() {
                     if let Err(e) = self.editor.insert_barline() {
                         self.error_msg = Some(e.to_string());
+                    } else {
+                        self.editor.version_controller.commit("Insert barline");
                     }
                     self.mode = Mode::Normal;
                 } else {
@@ -282,13 +350,27 @@ impl App {
         }
     }
 
-    fn handle_continuous_replace(&mut self, key: event::KeyEvent) {
+    fn handle_continuous_replace(&mut self, key: event::KeyEvent, start_col: usize) {
         match key.code {
+            KeyCode::Enter => {
+                let num_strings = self.editor.document.tuning.len();
+                if self.editor.cursor.string + 1 < num_strings {
+                    self.editor.version_controller.commit("Continuous replace");
+                    self.editor.cursor.string += 1;
+                    self.editor.cursor.col = start_col;
+                } else {
+                    self.editor.cursor.string = 0;
+                    self.editor.cursor.col = start_col;
+                    self.editor.version_controller.commit("Continuous replace");
+                    self.mode = Mode::Normal;
+                }
+            }
             KeyCode::Esc => {
+                self.editor.version_controller.commit("Continuous replace");
                 self.mode = Mode::Normal;
             }
             KeyCode::Backspace => {
-                let tuning_len = self.editor.document.tuning.len();
+                let _tuning_len = self.editor.document.tuning.len();
                 
                 // Move left by 1 if possible
                 if self.editor.cursor.col > 0 {
@@ -296,12 +378,12 @@ impl App {
                 }
                 
                 // Keep moving left if we land on a barline
-                while self.editor.cursor.col > 0 && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
+                while self.editor.cursor.col > 0 && self.editor.document.is_barline(self.editor.cursor.col) {
                     self.editor.move_cursor(-1, 0);
                 }
                 
                 // Reset the char to a dash if it's not a barline
-                if !self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
+                if !self.editor.document.is_barline(self.editor.cursor.col) {
                     self.editor.replace_chars(&['-']);
                 }
             }
@@ -312,19 +394,19 @@ impl App {
                 self.editor.move_cursor(0, 1);
             }
             KeyCode::Left => {
-                let tuning_len = self.editor.document.tuning.len();
+                let _tuning_len = self.editor.document.tuning.len();
                 if self.editor.cursor.col > 0 {
                     self.editor.move_cursor(-1, 0);
                 }
-                while self.editor.cursor.col > 0 && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) {
+                while self.editor.cursor.col > 0 && self.editor.document.is_barline(self.editor.cursor.col) {
                     self.editor.move_cursor(-1, 0);
                 }
             }
             KeyCode::Right => {
-                let tuning_len = self.editor.document.tuning.len();
+                let _tuning_len = self.editor.document.tuning.len();
                 self.editor.move_cursor(1, 0);
-                while self.editor.cursor.col < self.editor.document.columns.len() 
-                    && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
+                while self.editor.cursor.col < self.editor.document.total_global_cols() 
+                    && self.editor.document.is_barline(self.editor.cursor.col) 
                 {
                     self.editor.move_cursor(1, 0);
                 }
@@ -349,10 +431,62 @@ impl App {
                 }
 
                 // Skip any existing barlines so we don't accidentally overwrite them
-                let tuning_len = self.editor.document.tuning.len();
-                while self.editor.cursor.col < self.editor.document.columns.len() 
-                    && self.editor.document.columns[self.editor.cursor.col].is_barline(tuning_len) 
+                let _tuning_len = self.editor.document.tuning.len();
+                while self.editor.cursor.col < self.editor.document.total_global_cols() 
+                    && self.editor.document.is_barline(self.editor.cursor.col) 
                 {
+                    self.editor.move_cursor(1, 0);
+                }
+            }
+            _ => {
+                self.mode = Mode::Normal;
+            }
+        }
+    }
+
+    
+    fn handle_insert(&mut self, key: event::KeyEvent, start_col: usize) {
+        match key.code {
+            KeyCode::Esc => {
+                self.editor.version_controller.commit("Insert");
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let num_strings = self.editor.document.tuning.len();
+                if self.editor.cursor.string + 1 < num_strings {
+                    self.editor.version_controller.commit("Insert");
+                    self.editor.cursor.string += 1;
+                    self.editor.cursor.col = start_col;
+                    self.mode = Mode::ContinuousReplace { start_col };
+                } else {
+                    self.editor.cursor.string = 0;
+                    self.editor.cursor.col = start_col;
+                    self.editor.version_controller.commit("Insert");
+                    self.mode = Mode::Normal;
+                }
+            }
+            KeyCode::Backspace => {
+                if self.editor.cursor.col > 0 {
+                    self.editor.move_cursor(-1, 0);
+                    self.editor.delete_column();
+                }
+            }
+            KeyCode::Char(c) => {
+                if !is_valid_continuous_replace_char(c) {
+                    self.error_msg = Some(format!("Invalid character: '{}'", c));
+                    self.mode = Mode::Normal;
+                    return;
+                }
+                if c == '|' {
+                    if let Err(e) = self.editor.insert_barline() {
+                        self.error_msg = Some(e.to_string());
+                        return;
+                    }
+                    self.editor.move_cursor(1, 0);
+                } else {
+                    let insert_c = if c == ' ' { '-' } else { c };
+                    self.editor.insert_column();
+                    self.editor.replace_chars(&[insert_c]);
                     self.editor.move_cursor(1, 0);
                 }
             }
@@ -366,6 +500,7 @@ impl App {
         if buffer.is_empty() { return; }
         let chars: Vec<char> = buffer.chars().collect();
         self.editor.replace_chars(&chars);
+        self.editor.version_controller.commit("Replace characters");
     }
 
     fn handle_prompt(&mut self, key: event::KeyEvent, mut buffer: String) {
@@ -375,6 +510,7 @@ impl App {
             }
             KeyCode::Enter => {
                 self.editor.set_annotation(buffer);
+                self.editor.version_controller.commit("Set annotation");
                 self.mode = Mode::Normal;
             }
             KeyCode::Backspace => {
@@ -408,8 +544,8 @@ impl App {
                 match key.code {
                     KeyCode::Char('h') => self.editor.move_cursor(-(count as isize), 0),
                     KeyCode::Char('l') => self.editor.move_cursor(count as isize, 0),
-                    KeyCode::Char('j') => self.editor.move_cursor(0, count as isize),
-                    KeyCode::Char('k') => self.editor.move_cursor(0, -(count as isize)),
+                    KeyCode::Char('j') => self.move_cursor_vertical(1, count),
+                    KeyCode::Char('k') => self.move_cursor_vertical(-1, count),
                     KeyCode::Char('w') => { for _ in 0..count { self.editor.jump_next_measure(); } }
                     KeyCode::Char('b') => { for _ in 0..count { self.editor.jump_prev_measure(); } }
                     KeyCode::Char('e') => { for _ in 0..count { self.editor.jump_end_measure(); } }
@@ -435,6 +571,7 @@ impl App {
                 self.count_buffer.clear();
                 self.editor.copy_columns(start_col, self.editor.cursor.col);
                 self.editor.delete_columns_range(start_col, self.editor.cursor.col);
+                self.editor.version_controller.commit("Delete columns");
                 self.mode = Mode::Normal;
             }
             _ => {

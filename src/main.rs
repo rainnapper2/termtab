@@ -1,8 +1,6 @@
-mod app;
-mod document;
-mod editor;
-mod notes;
-mod tui;
+use termtab::app::App;
+use termtab::editor::Editor;
+use termtab::tui;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -11,8 +9,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{error::Error, io};
-use app::App;
-use editor::Editor;
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();

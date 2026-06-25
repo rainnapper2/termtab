@@ -1,12 +1,14 @@
-use crate::document::{TabColumn, TabDocument, Cursor};
+use crate::models::document::{TabDocument, Cursor};
 use serde::{Serialize, Deserialize};
+use crate::models::operation::{Operation, VersionController};
+use crate::models::measure::VirtualColumn;
+
 
 #[derive(Serialize, Deserialize)]
 pub struct Editor {
     pub document: TabDocument,
     pub cursor: Cursor,
-    pub undo_stack: Vec<(TabDocument, Cursor)>,
-    pub redo_stack: Vec<(TabDocument, Cursor)>,
+    pub version_controller: VersionController,
 }
 
 impl Editor {
@@ -14,33 +16,18 @@ impl Editor {
         Self {
             document: TabDocument::new(tuning),
             cursor: Cursor::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
+            version_controller: VersionController::new(),
         }
     }
 
 
 
-    /// Save the current state to the undo stack and clear redo stack.
-    fn save_state(&mut self) {
-        self.undo_stack.push((self.document.clone(), self.cursor));
-        self.redo_stack.clear();
+    pub fn undo(&mut self) -> Option<String> {
+        self.version_controller.undo(&mut self.document)
     }
 
-    pub fn undo(&mut self) {
-        if let Some((prev_doc, prev_cursor)) = self.undo_stack.pop() {
-            self.redo_stack.push((self.document.clone(), self.cursor));
-            self.document = prev_doc;
-            self.cursor = prev_cursor;
-        }
-    }
-
-    pub fn redo(&mut self) {
-        if let Some((next_doc, next_cursor)) = self.redo_stack.pop() {
-            self.undo_stack.push((self.document.clone(), self.cursor));
-            self.document = next_doc;
-            self.cursor = next_cursor;
-        }
+    pub fn redo(&mut self) -> Option<String> {
+        self.version_controller.redo(&mut self.document)
     }
 
     pub fn move_cursor(&mut self, dx: isize, dy: isize) {
@@ -48,8 +35,8 @@ impl Editor {
         let new_string = (self.cursor.string as isize + dy).clamp(0, self.document.tuning.len().saturating_sub(1) as isize) as usize;
         
         // Ensure the document expands if we move past the end
-        while new_col >= self.document.columns.len() {
-            self.document.columns.push(TabColumn::new());
+        while new_col >= self.document.total_global_cols() {
+            self.document.append_col();
         }
 
         self.cursor.col = new_col;
@@ -57,26 +44,26 @@ impl Editor {
     }
 
     pub fn jump_to_measure(&mut self, target_measure: usize) {
-        for i in 0..self.document.columns.len() {
+        for i in 0..self.document.total_global_cols() {
             if self.document.is_measure_start(i) && self.document.measure_number_at_col(i) == target_measure {
                 self.cursor.col = i;
                 return;
             }
         }
-        self.cursor.col = self.document.columns.len().saturating_sub(1);
+        self.cursor.col = self.document.total_global_cols().saturating_sub(1);
     }
 
     pub fn jump_next_measure(&mut self) {
-        for i in (self.cursor.col + 1)..self.document.columns.len() {
-            if self.document.columns[i].is_barline(self.document.tuning.len()) {
+        for i in (self.cursor.col + 1)..self.document.total_global_cols() {
+            if self.document.is_barline(i) {
                 self.cursor.col = i + 1;
-                if self.cursor.col >= self.document.columns.len() {
-                    self.document.columns.push(TabColumn::new());
+                if self.cursor.col >= self.document.total_global_cols() {
+                    self.document.append_col();
                 }
                 return;
             }
         }
-        self.cursor.col = self.document.columns.len().saturating_sub(1);
+        self.cursor.col = self.document.total_global_cols().saturating_sub(1);
     }
 
     pub fn jump_prev_measure(&mut self) {
@@ -85,12 +72,12 @@ impl Editor {
         
         // If we are already at the start of a measure (column right after a barline),
         // skip this barline to jump to the start of the previous measure.
-        if self.document.columns[search_start].is_barline(self.document.tuning.len()) {
+        if self.document.is_barline(search_start) {
             search_start = search_start.saturating_sub(1);
         }
 
         for i in (0..=search_start).rev() {
-            if self.document.columns[i].is_barline(self.document.tuning.len()) {
+            if self.document.is_barline(i) {
                 self.cursor.col = i + 1;
                 return;
             }
@@ -103,20 +90,20 @@ impl Editor {
         
         // If we are already at the end of a measure (column right before a barline),
         // skip the upcoming barline to jump to the end of the next measure.
-        if start_search < self.document.columns.len() && self.document.columns[start_search].is_barline(self.document.tuning.len()) {
+        if start_search < self.document.total_global_cols() && self.document.is_barline(start_search) {
             start_search += 1;
         }
 
-        for i in start_search..self.document.columns.len() {
-            if self.document.columns[i].is_barline(self.document.tuning.len()) {
+        for i in start_search..self.document.total_global_cols() {
+            if self.document.is_barline(i) {
                 self.cursor.col = i.saturating_sub(1);
                 return;
             }
         }
-        self.cursor.col = self.document.columns.len().saturating_sub(1);
+        self.cursor.col = self.document.total_global_cols().saturating_sub(1);
     }
 
-    pub fn jump_next_row(&mut self, wrap_width: usize) {
+    pub fn jump_next_row(&mut self, wrap_width: usize) -> bool {
         let chunks = self.document.calculate_chunks(wrap_width);
         for (i, chunk) in chunks.iter().enumerate() {
             if chunk.contains(&self.cursor.col) {
@@ -124,13 +111,15 @@ impl Editor {
                     let offset = self.cursor.col - chunk.start;
                     let next_chunk = &chunks[i + 1];
                     self.cursor.col = (next_chunk.start + offset).min(next_chunk.end.saturating_sub(1));
+                    return true;
                 }
                 break;
             }
         }
+        false
     }
 
-    pub fn jump_prev_row(&mut self, wrap_width: usize) {
+    pub fn jump_prev_row(&mut self, wrap_width: usize) -> bool {
         let chunks = self.document.calculate_chunks(wrap_width);
         for (i, chunk) in chunks.iter().enumerate() {
             if chunk.contains(&self.cursor.col) {
@@ -138,91 +127,158 @@ impl Editor {
                     let offset = self.cursor.col - chunk.start;
                     let prev_chunk = &chunks[i - 1];
                     self.cursor.col = (prev_chunk.start + offset).min(prev_chunk.end.saturating_sub(1));
+                    return true;
                 }
                 break;
             }
         }
+        false
     }
 
     pub fn insert_column(&mut self) {
-        self.save_state();
-        self.document.columns.insert(self.cursor.col, TabColumn::new());
+        let tuning_len = self.document.tuning.len();
+        self.version_controller.apply(&mut self.document, Operation::InsertColumn { 
+            col: self.cursor.col, 
+            content: VirtualColumn { strings: vec!['-'; tuning_len], annotation: None, is_box_start: false, is_barline: false } 
+        });
+        // App handles commit
+    }
+
+    pub fn delete_char(&mut self) {
+        if self.document.is_barline(self.cursor.col) { return; }
+        let old_c = self.document.get_char(self.cursor.col, self.cursor.string);
+        self.version_controller.apply(&mut self.document, Operation::DeleteChar { 
+            col: self.cursor.col, 
+            string: self.cursor.string, 
+            old_c 
+        });
+        // App handles commit
     }
 
     pub fn delete_column(&mut self) {
-        if self.document.columns.is_empty() { return; }
-        self.save_state();
-        self.document.columns.remove(self.cursor.col);
+        if self.document.total_global_cols() == 0  { return; }
+        let content = self.document.get_virtual_column(self.cursor.col);
+        self.version_controller.apply(&mut self.document, Operation::DeleteColumn { 
+            col: self.cursor.col, 
+            content 
+        });
+        
         // Ensure there's always at least one column
-        if self.document.columns.is_empty() {
-            self.document.columns.push(TabColumn::new());
+        if self.document.total_global_cols() == 0  {
+            let tuning_len = self.document.tuning.len();
+            self.version_controller.apply(&mut self.document, Operation::InsertColumn { 
+                col: 0, 
+                content: VirtualColumn { strings: vec!['-'; tuning_len], annotation: None, is_box_start: false, is_barline: false } 
+            });
         }
-        if self.cursor.col >= self.document.columns.len() {
-            self.cursor.col = self.document.columns.len() - 1;
+        // App handles commit
+
+        if self.cursor.col >= self.document.total_global_cols() {
+            self.cursor.col = self.document.total_global_cols() - 1;
         }
     }
 
     pub fn replace_chars(&mut self, chars: &[char]) {
-        self.save_state();
+        let mut old_chars = Vec::new();
+        for i in 0..chars.len() {
+            if self.cursor.col + i < self.document.total_global_cols() {
+                old_chars.push(self.document.get_char(self.cursor.col + i, self.cursor.string));
+            } else {
+                old_chars.push('-');
+                let tuning_len = self.document.tuning.len();
+                self.version_controller.apply(&mut self.document, Operation::InsertColumn { 
+                    col: self.cursor.col + i, 
+                    content: VirtualColumn { strings: vec!['-'; tuning_len], annotation: None, is_box_start: false, is_barline: false } 
+                });
+            }
+        }
         
-        // Ensure we have enough columns to fit the characters
-        while self.cursor.col + chars.len() > self.document.columns.len() {
-            self.document.columns.push(TabColumn::new());
-        }
-
-        for (i, &c) in chars.iter().enumerate() {
-            self.document.columns[self.cursor.col + i].set_char(self.cursor.string, c);
-        }
+        self.version_controller.apply(&mut self.document, Operation::ReplaceChars {
+            start_col: self.cursor.col,
+            string: self.cursor.string,
+            old_chars,
+            new_chars: chars.to_vec(),
+        });
+        // App handles commit
     }
 
     pub fn insert_barline(&mut self) -> Result<(), &'static str> {
-        let is_blank = self.document.columns[self.cursor.col].is_blank();
+        let is_blank = self.document.is_blank(self.cursor.col);
         if !is_blank {
             return Err("Column must be completely blank to insert a barline");
         }
 
-        self.save_state();
-        self.document.columns[self.cursor.col] = TabColumn::barline(self.document.tuning.len());
+        self.version_controller.apply(&mut self.document, Operation::InsertBarline { col: self.cursor.col });
+        // App handles commit
         Ok(())
     }
 
     pub fn set_annotation(&mut self, text: String) {
-        self.save_state();
-        self.document.columns[self.cursor.col].annotation = Some(text);
+        let old_ann = self.document.get_virtual_column(self.cursor.col).annotation;
+        self.version_controller.apply(&mut self.document, Operation::SetAnnotation {
+            col: self.cursor.col,
+            old_ann,
+            new_ann: if text.is_empty() { None } else { Some(text) },
+        });
+        // App handles commit
     }
 
     pub fn copy_columns(&mut self, start: usize, end: usize) {
         let (s, e) = if start <= end { (start, end) } else { (end, start) };
-        let e = e.min(self.document.columns.len().saturating_sub(1));
-        
-        self.document.clipboard = self.document.columns[s..=e].to_vec();
+        let e = e.min(self.document.total_global_cols().saturating_sub(1));
+        self.document.copy_cols(s, e);
     }
 
     pub fn delete_columns_range(&mut self, start: usize, end: usize) {
         let (s, e) = if start <= end { (start, end) } else { (end, start) };
-        let e = e.min(self.document.columns.len().saturating_sub(1));
+        let e = e.min(self.document.total_global_cols().saturating_sub(1));
         
-        self.save_state();
-        self.document.columns.drain(s..=e);
-        
-        if self.document.columns.is_empty() {
-            self.document.columns.push(TabColumn::new());
+        let mut contents = Vec::new();
+        for i in s..=e {
+            contents.push(self.document.get_virtual_column(i));
         }
+
+        self.version_controller.apply(&mut self.document, Operation::DeleteColumnsRange {
+            start: s,
+            end: e,
+            contents,
+        });
         
-        self.cursor.col = s.min(self.document.columns.len() - 1);
+        if self.document.total_global_cols() == 0  {
+            let tuning_len = self.document.tuning.len();
+            self.version_controller.apply(&mut self.document, Operation::InsertColumn { 
+                col: 0, 
+                content: VirtualColumn { strings: vec!['-'; tuning_len], annotation: None, is_box_start: false, is_barline: false } 
+            });
+        }
+        // App handles commit
+        
+        self.cursor.col = s.min(self.document.total_global_cols().saturating_sub(1));
     }
 
     pub fn paste_columns(&mut self) {
         if self.document.clipboard.is_empty() {
             return;
         }
-        self.save_state();
-        let clip = self.document.clipboard.clone();
         
-        // We use splice to insert the clipboard at the cursor.
-        let tail = self.document.columns.split_off(self.cursor.col);
-        self.document.columns.extend(clip);
-        self.document.columns.extend(tail);
+        let mut contents = Vec::new();
+        for m in &self.document.clipboard {
+            let mut strings = Vec::new();
+            for s in 0..self.document.tuning.len() {
+                strings.push(m.get_char(s, 0));
+            }
+            contents.push(VirtualColumn {
+                strings,
+                annotation: m.annotations.get(&0).cloned(),
+                is_box_start: m.box_starts.contains(&0),
+                is_barline: false,
+            });
+        }
+        self.version_controller.apply(&mut self.document, Operation::InsertColumnsRange {
+            start: self.cursor.col,
+            contents,
+        });
+        // App handles commit
     }
 }
 
@@ -233,16 +289,18 @@ mod tests {
     #[test]
     fn test_editor_insert_delete_column() {
         let mut ed = Editor::new(vec!['e', 'B', 'G', 'D', 'A', 'E']);
-        assert_eq!(ed.document.columns.len(), 65); // 4 measures * 15 cols + 5 barlines = 65
+        assert_eq!(ed.document.total_global_cols(), 64); // 4 measures * 15 cols + 5 barlines = 65
         ed.insert_column();
-        assert_eq!(ed.document.columns.len(), 66);
+        ed.version_controller.commit("Insert");
+        assert_eq!(ed.document.total_global_cols(), 65);
         ed.undo();
-        assert_eq!(ed.document.columns.len(), 65);
+        assert_eq!(ed.document.total_global_cols(), 64);
         ed.redo();
-        assert_eq!(ed.document.columns.len(), 66);
+        assert_eq!(ed.document.total_global_cols(), 65);
 
         ed.delete_column();
-        assert_eq!(ed.document.columns.len(), 65);
+        ed.version_controller.commit("Delete");
+        assert_eq!(ed.document.total_global_cols(), 64);
     }
 
     #[test]
@@ -251,13 +309,14 @@ mod tests {
         ed.cursor.col = 0;
         ed.cursor.string = 0;
         ed.replace_chars(&['1', '1']);
-        assert_eq!(ed.document.columns[0].get_char(0), '1');
-        assert_eq!(ed.document.columns[1].get_char(0), '1');
-        assert_eq!(ed.document.columns[2].get_char(0), '-');
+        ed.version_controller.commit("Replace");
+        assert_eq!(ed.document.get_char(0, 0), '1');
+        assert_eq!(ed.document.get_char(1, 0), '1');
+        assert_eq!(ed.document.get_char(2, 0), '-');
 
         ed.undo();
-        assert_eq!(ed.document.columns[0].get_char(0), '-');
-        assert_eq!(ed.document.columns[1].get_char(0), '-');
+        assert_eq!(ed.document.get_char(0, 0), '-');
+        assert_eq!(ed.document.get_char(1, 0), '-');
     }
 
     #[test]
@@ -266,14 +325,16 @@ mod tests {
         ed.cursor.col = 0;
         ed.cursor.string = 0;
         ed.replace_chars(&['9']);
+        ed.version_controller.commit("Replace");
         
         ed.copy_columns(0, 0);
         assert_eq!(ed.document.clipboard.len(), 1);
-        assert_eq!(ed.document.clipboard[0].get_char(0), '9');
+        assert_eq!(ed.document.clipboard[0].get_char(0, 0), '9');
 
         ed.cursor.col = 5;
         ed.paste_columns();
-        assert_eq!(ed.document.columns[5].get_char(0), '9');
-        assert_eq!(ed.document.columns.len(), 66);
+        ed.version_controller.commit("Paste");
+        assert_eq!(ed.document.get_char(5, 0), '9');
+        assert_eq!(ed.document.total_global_cols(), 65);
     }
 }

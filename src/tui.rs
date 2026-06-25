@@ -47,9 +47,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     let mode_str = match &app.mode {
         Mode::Normal => "NORMAL".to_string(),
         Mode::Replace { buffer } => format!("REPLACE [{}]", buffer),
-        Mode::ContinuousReplace => "C-REPLACE".to_string(),
+        Mode::ContinuousReplace { .. } => "C-REPLACE".to_string(),
         Mode::Prompt { buffer } => format!("PROMPT [{}]", buffer),
         Mode::Visual { start_col } => format!("VISUAL [start: {}]", start_col),
+        Mode::Insert { .. } => "INSERT".to_string(),
         Mode::Command { buffer } => format!("COMMAND [:{}]", buffer),
         Mode::Help => "HELP".to_string(),
     };
@@ -153,8 +154,9 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
 
     // Pre-calculate active key for every column so multiple key changes work properly
     let mut current_key: Option<String> = None;
-    let mut column_keys = Vec::with_capacity(app.editor.document.columns.len());
-    for col in &app.editor.document.columns {
+    let mut column_keys = Vec::with_capacity(app.editor.document.total_global_cols());
+    for i in 0..app.editor.document.total_global_cols() {
+        let col = app.editor.document.get_virtual_column(i);
         if let Some(text) = &col.annotation {
             if let Some(k) = parse_key_signature(text) {
                 current_key = Some(k);
@@ -167,7 +169,7 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
 
     for chunk_range in chunks {
         let current_col = chunk_range.start;
-        let chunk = &app.editor.document.columns[chunk_range];
+        let chunk = app.editor.document.get_virtual_columns(chunk_range.clone());
 
         // 1. Process Annotations for this chunk
         // Stack them if they overlap.
@@ -235,7 +237,14 @@ fn render_tab_document(app: &App, max_width: usize) -> (Text<'static>, Option<(u
             let mut i = 0;
             while i < chunk.len() {
                 let global_col = current_col + i;
-                let c = chunk[i].get_char(string_idx);
+                let mut c = chunk[i].get_char(string_idx);
+
+                if let Mode::Replace { buffer } = &app.mode {
+                    if string_idx == app.editor.cursor.string && global_col >= app.editor.cursor.col && global_col < app.editor.cursor.col + buffer.len() {
+                        let offset = global_col - app.editor.cursor.col;
+                        c = buffer.chars().nth(offset).unwrap_or(c);
+                    }
+                }
                 
                 let mut is_selected = false;
                 if let Mode::Visual { start_col } = app.mode {

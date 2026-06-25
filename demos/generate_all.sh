@@ -5,28 +5,31 @@ cargo build
 
 echo "Generating Tapes..."
 
-cp demos/song.json demos/1_navigation.json
-vhs demos/1_navigation.tape
+run_demo() {
+    local tape_file=$1
+    local json_file="${tape_file%.tape}.json"
+    
+    if [ "$tape_file" = "demos/2_editing.tape" ] || [ "$tape_file" = "demos/3_undo_redo.tape" ] || [ "$tape_file" = "demos/9_chords.tape" ]; then
+        rm -f "$json_file"
+    else
+        cp demos/song.json "$json_file"
+    fi
+    vhs "$tape_file"
+}
 
-rm -f demos/2_editing.json
-vhs demos/2_editing.tape
-
-rm -f demos/3_undo_redo.json
-vhs demos/3_undo_redo.tape
-
-cp demos/song.json demos/4_copy_paste.json
-vhs demos/4_copy_paste.tape
-
-cp demos/song.json demos/5_note_mode.json
-vhs demos/5_note_mode.tape
-
-cp demos/song.json demos/6_annotations.json
-vhs demos/6_annotations.tape
-
-cp demos/song.json demos/7_key_change.json
-vhs demos/7_key_change.tape
-
-cp demos/song.json demos/8_dynamic_wrap.json
-vhs demos/8_dynamic_wrap.tape
+if [ -n "$1" ]; then
+    run_demo "$1"
+else
+    run_demo demos/1_navigation.tape
+    run_demo demos/2_editing.tape
+    run_demo demos/3_undo_redo.tape
+    run_demo demos/4_copy_paste.tape
+    run_demo demos/5_note_mode.tape
+    run_demo demos/6_annotations.tape
+    run_demo demos/7_key_change.tape
+    run_demo demos/8_dynamic_wrap.tape
+    run_demo demos/readme_demo.tape
+    run_demo demos/9_chords.tape
+fi
 
 echo "All Done!"
